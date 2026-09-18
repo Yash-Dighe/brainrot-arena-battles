@@ -1,0 +1,156 @@
+{
+  "notes": "Each ability is themed to the character and SCALES over the round so fights climax past the 1-minute mark. Tune the *_gain / interval numbers to keep fights close.",
+  "characters": [
+    {
+      "id": "tralalero",
+      "name": "Tralalero Tralala",
+      "theme": "Shark in Nike sneakers, three-legged sprinter",
+      "mechanic": "Runs faster every second; faster speed = harder hits.",
+      "hp": 90000,
+      "base_damage": 4,
+      "scaling": {
+        "speed_gain_per_sec": 0.04,
+        "damage_from_speed": "damage *= current_speed / base_speed"
+      },
+      "signature_fx": "speed trail behind the ball that grows longer as speed increases",
+      "status": "LOCKED"
+    },
+    {
+      "id": "bombardiro",
+      "name": "Bombardiro Crocodilo",
+      "theme": "Crocodile-WWII bomber that never lands",
+      "mechanic": "Drops bombs from above that explode for area damage; drops more often as the round goes on.",
+      "hp": 95000,
+      "base_damage": 3,
+      "scaling": {
+        "bomb_interval_start_sec": 6.0,
+        "bomb_interval_min_sec": 1.0,
+        "interval_decay_per_drop": 0.9,
+        "bomb_damage": 40,
+        "bomb_damage_gain": 0.06
+      },
+      "signature_fx": "bomb falls from top, explosion flash + expanding shockwave ring on impact",
+      "status": "LOCKED"
+    },
+    {
+      "id": "tungtung",
+      "name": "Tung Tung Tung Sahur",
+      "theme": "Wooden drum creature with a baseball bat",
+      "mechanic": "Spins his bat; the spin gets faster and hits harder the longer the fight lasts.",
+      "hp": 92000,
+      "base_damage": 5,
+      "scaling": {
+        "spin_speed_gain_per_sec": 0.05,
+        "damage_gain_per_sec": 0.04
+      },
+      "signature_fx": "widening motion-blur arc around the bat as spin speeds up",
+      "status": "LOCKED"
+    },
+    {
+      "id": "ballerina",
+      "name": "Ballerina Cappuccina",
+      "theme": "Ballerina with a cappuccino head, pirouettes",
+      "mechanic": "Pirouettes in place; each spin adds a stacking damage buff that keeps climbing.",
+      "hp": 91000,
+      "base_damage": 4,
+      "scaling": {
+        "buff_per_spin": 0.03,
+        "spin_interval_sec": 1.5,
+        "buff_cap": null
+      },
+      "signature_fx": "spinning ring of coffee/sparkles around her; adds another ring + brightens each buff stack",
+      "status": "LOCKED"
+    },
+    {
+      "id": "boneca",
+      "name": "Boneca Ambalabu",
+      "theme": "Frog-tire creature, pure chaos",
+      "mechanic": "Rolls random damage each hit with a multiplier that climbs all round.",
+      "hp": 88000,
+      "roll_min": 1,
+      "roll_max": 12,
+      "scaling": {
+        "mult_start": 1.0,
+        "mult_gain_per_hit": 0.02
+      },
+      "signature_fx": "dice/slot symbols flash above her on each hit; jackpot flash + gold burst on a high roll",
+      "status": "LOCKED"
+    },
+    {
+      "id": "cappuccino",
+      "name": "Cappuccino Assassino",
+      "theme": "Coffee-cup assassin with dual blades",
+      "mechanic": "Every few hits he lands a caffeinated combo; combos get longer and faster as he 'wakes up' over the round.",
+      "hp": 89000,
+      "base_damage": 5,
+      "scaling": {
+        "combo_every_hits": 5,
+        "combo_hits_start": 2,
+        "combo_hits_gain_per_trigger": 1,
+        "combo_speed_gain": 0.05
+      },
+      "signature_fx": "TBD",
+      "status": "open"
+    },
+    {
+      "id": "brrbrr",
+      "name": "Brr Brr Patapim",
+      "theme": "Tree-legged creature rooted to the ground",
+      "mechanic": "Grows roots/branches that spread across the arena; the more branches, the more contact damage he deals.",
+      "hp": 97000,
+      "base_damage": 3,
+      "scaling": {
+        "branch_every_sec": 4.0,
+        "branch_interval_min_sec": 1.5,
+        "interval_decay": 0.92,
+        "damage_per_branch": 0.5
+      },
+      "signature_fx": "TBD",
+      "status": "open"
+    },
+    {
+      "id": "chimpanzini",
+      "name": "Chimpanzini Bananini",
+      "theme": "Monkey inside a banana",
+      "mechanic": "Throws banana peels that make the opponent slip; each slip stacks a lasting speed penalty on the enemy.",
+      "hp": 90000,
+      "base_damage": 4,
+      "scaling": {
+        "peel_every_sec": 3.0,
+        "slow_per_peel": 0.04,
+        "slow_cap": 0.6,
+        "bonus_dmg_on_slip": 1.3
+      },
+      "signature_fx": "enemy visibly spins out and wobbles when they slip on a peel",
+      "status": "LOCKED"
+    },
+    {
+      "id": "lirili",
+      "name": "Lirili Larila",
+      "theme": "Cactus-elephant with a clock, time-themed",
+      "mechanic": "Slows time in bursts; while active his own hits count double, and the bursts come more often late-game.",
+      "hp": 91000,
+      "base_damage": 4,
+      "scaling": {
+        "burst_interval_start_sec": 8.0,
+        "burst_interval_min_sec": 3.0,
+        "interval_decay": 0.9,
+        "burst_duration_sec": 2.0,
+        "dmg_mult_in_burst": 2.0
+      },
+      "signature_fx": "whole arena tints blue + motion blur during the time-slow burst",
+      "status": "LOCKED"
+    }
+  ],
+  "universal_hit_fx": {
+    "flash": "ball flashes white for ~4 frames on impact",
+    "squash_stretch": "quick squash-and-stretch deform on the hit ball",
+    "damage_number": "number pops and floats up/fades; bigger & redder for bigger hits",
+    "screen_shake": "shake scaled to damage; only noticeable on heavy hits"
+  },
+  "audio_notes": {
+    "sfx": "hits/bounces/explosions timed to event log; pitch rises with damage; royalty-free only",
+    "music": "OPTIONAL toggle, not a default. Keep volume low and duck under narration. A/B test with vs without.",
+    "narration": "primary audio; must stay clear and on top of the mix"
+  }
+}
