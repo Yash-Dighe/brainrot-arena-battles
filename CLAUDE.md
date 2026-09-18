@@ -1,4 +1,4 @@
-# Brainrot Arena â€” project context
+# Brainrot Arena — project context
 
 Automated 1v1 physics ball-battle videos for TikTok (later YouTube Shorts).
 Format reference: `@kinetiq.studios` on Instagram Reels.
@@ -13,16 +13,16 @@ comes from damage ramping.
 
 On screen: character names up top in each ball's color, live HP, floating damage
 numbers on hits, and a per-ball stats panel in the bottom corners (in that
-ball's color) showing its scaling numbers â€” e.g. `Damage: 3 / Multiplier: x1.43`.
+ball's color) showing its scaling numbers — e.g. `Damage: 3 / Multiplier: x1.43`.
 
 ## Non-negotiable constraints
 
 1. **Every video must exceed 60 seconds.** TikTok Creator Rewards only pays on
-   videos one minute or longer. The sim must target ~65â€“90s and reject fights
+   videos one minute or longer. The sim must target ~65–90s and reject fights
    outside that window before rendering.
 2. **Render quality is the #1 priority.** This is the whole product. Smooth 60fps
    motion, squash-and-stretch on impact, glow, trails, clean bold typography,
-   punchy hit feedback. Never trade look for speed â€” make one gorgeous video
+   punchy hit feedback. Never trade look for speed — make one gorgeous video
    first, optimize throughput second.
 3. **Originality.** TikTok demotes and demonetizes content it reads as unoriginal
    or minimally edited. Our edge is that every fight is genuinely unique and the
@@ -33,7 +33,7 @@ ball's color) showing its scaling numbers â€” e.g. `Damage: 3 / Multiplier:
 
 ## Content guidance
 
-- Narration is unhinged brainrot commentary â€” absurd, fried, funny.
+- Narration is unhinged brainrot commentary — absurd, fried, funny.
   e.g. "x8.8 body multiplier?? that's not a ball anymore that's a LIFESTYLE"
 - **No explicit drug references.** The vibe should just be enjoyable to someone
   who's high; it never needs to mention it.
@@ -41,29 +41,29 @@ ball's color) showing its scaling numbers â€” e.g. `Damage: 3 / Multiplier:
   comments and cuts ad revenue, which would kill the "comment the next matchup"
   engagement loop. The brainrot audience already skews young without aiming at it.
 
-## Architecture â€” the six-step pipeline
+## Architecture — the six-step pipeline
 
 The core discipline: **the sim decides everything, the renderer only draws.**
 The sim never touches pixels; the renderer never rolls damage. This means a
 boring fight is thrown away instantly before any render time is spent, and
 visuals can be reworked without changing how fights play out.
 
-1. **Config** (`characters.json`) â€” every character's HP, damage and scaling
+1. **Config** (`characters.json`) — every character's HP, damage and scaling
    numbers plus their signature FX. All balance lives here, never in code, so a
    character can be tuned without touching the program.
-2. **Sim** (`sim/engine.py`) â€” headless physics. Runs in a fraction of a second
+2. **Sim** (`sim/engine.py`) — headless physics. Runs in a fraction of a second
    and emits a timestamped event log (JSON). Deterministic by seed.
-3. **Render** (`sim/render.py`) â€” reads the event log, draws every frame, pipes
+3. **Render** (`sim/render.py`) — reads the event log, draws every frame, pipes
    to ffmpeg. Where the visual quality work happens.
-4. **Audio** â€” SFX timed to the same event log (hit pitch rises with damage).
-   Music is an **optional toggle, not a default** â€” it competes with the
+4. **Audio** — SFX timed to the same event log (hit pitch rises with damage).
+   Music is an **optional toggle, not a default** — it competes with the
    narrator. Keep it low, duck under the voice, A/B test with and without.
-5. **Narration** â€” feed the event log to an LLM for the script, then TTS for the
+5. **Narration** — feed the event log to an LLM for the script, then TTS for the
    voice + word timings for burned-in captions. Lines are written to land on the
    moment they describe.
-6. **Assembly & posting** â€” ffmpeg muxes video + SFX + narration, burns captions.
+6. **Assembly & posting** — ffmpeg muxes video + SFX + narration, burns captions.
    **Post manually at first** so each video gets eyeballed and we learn what
-   works. Automate later via TikTok's *official* Content Posting API only â€”
+   works. Automate later via TikTok's *official* Content Posting API only —
    never third-party bots, which risk the account and its eligibility.
 
 ## Roster status
@@ -71,8 +71,8 @@ visuals can be reworked without changing how fights play out.
 9 characters in `characters.json`. All abilities are locked. Signature FX are
 locked for 7; still `"status": "open"` and needing FX ideas:
 
-- **Cappuccino Assassino** â€” caffeinated combos that get longer/faster
-- **Brr Brr Patapim** â€” spreading branches that raise contact damage
+- **Cappuccino Assassino** — caffeinated combos that get longer/faster
+- **Brr Brr Patapim** — spreading branches that raise contact damage
 
 ## Conventions
 
@@ -81,7 +81,11 @@ locked for 7; still `"status": "open"` and needing FX ideas:
   `assets/balls/<id>.png` (transparent, square); a colored placeholder is drawn
   if missing.
 - `sim/sweep.py` runs every matchup over many seeds and is the balance gate.
-- Event log schema is the contract between sim and render â€” change it in both.
+- `frames[].balls[]` carries the ability scalars the renderer drives FX from
+  (`speed`, `spin_rate`, `buff`, `boost`, `burst`). Add a field here rather
+  than making the renderer parse numbers back out of the `panel` strings --
+  those are display text the sim owns and are drawn verbatim.
+- Event log schema is the contract between sim and render — change it in both.
 - `out/` holds generated logs and videos and is gitignored.
 
 ## Balance status
