@@ -22,6 +22,8 @@ BALL_R = 78.0
 BASE_SPEED = 380.0
 MAX_SECONDS = 150.0
 HIT_COOLDOWN = 0.18                # per-pair, stops one collision multi-hitting
+BRANCH_COOLDOWN = 3.0              # branches tick on their own, much slower clock
+BOOST_DECAY_PER_SEC = 0.15         # how fast a peeled ball settles back down
 
 # Global escalation: damage is multiplied by exp(t / TAU). This is what makes
 # early hits register as ~5 damage against a 90k pool and late hits hit for
@@ -59,7 +61,7 @@ class Ball:
             "speed_mult": 1.0, "spin": 0.0, "spin_rate": 1.0, "buff": 1.0,
             "mult": float(cfg.get("scaling", {}).get("mult_start", 1.0)),
             "branches": 0, "combo_len": int(cfg.get("scaling", {}).get("combo_hits_start", 0)),
-            "hits": 0, "slow": 0.0, "burst": 0.0, "bombs": 0, "peels": 0,
+            "hits": 0, "boost": 0.0, "burst": 0.0, "bombs": 0, "peels": 0,
         }
         self._next = {}   # ability timers
 
@@ -106,6 +108,8 @@ class Sim:
         self.projectiles = []      # bombs / peels in flight
         self.branches = []         # static hazards
         self.hit_cd = 0.0
+        self.branch_cd = 0.0       # separate from hit_cd: a branch touch must not
+                                   # consume the opponent's collision cooldown
         self.winner = None
 
     # ----------------------------------------------------------------- damage
@@ -149,7 +153,7 @@ class Sim:
             base += src.st["branches"] * float(sc.get("damage_per_branch", 0.5))
         elif i == "lirili" and src.st["burst"] > 0:
             base *= float(sc.get("dmg_mult_in_burst", 2.0))
-        elif i == "chimpanzini" and dst.st["slow"] > 0:
+        elif i == "chimpanzini" and dst.st["boost"] > 0:
             base *= float(sc.get("bonus_dmg_on_slip", 1.3))
 
         self.deal(src, dst, base, **extra)
@@ -235,8 +239,8 @@ class Sim:
                     b._next["burst"] = self.t + iv + b.st["burst"]
                     self.log(type="time_warp", by=idx, dur=b.st["burst"])
 
-            if b.st["slow"] > 0:
-                b.st["slow"] = max(0.0, b.st["slow"] - dt * 0.15)
+            if b.st["boost"] > 0:
+                b.st["boost"] = max(0.0, b.st["boost"] - dt * BOOST_DECAY_PER_SEC)
 
     # ---------------------------------------------------------------- physics
     def step(self, dt):
@@ -244,7 +248,7 @@ class Sim:
         for idx, b in enumerate(self.balls):
             if not b.alive():
                 continue
-            mult = b.st["speed_mult"] * (1.0 - b.st["slow"])
+            mult = b.st["speed_mult"] * (1.0 + b.st["boost"])
             # Lirili's warp slows everyone else down
             foe = self.balls[1 - idx]
             if foe.id == "lirili" and foe.st["burst"] > 0:
@@ -300,10 +304,10 @@ class Sim:
                 tgt = self.balls[1 - p["owner"]]
                 if tgt.alive() and math.hypot(p["x"] - tgt.x, p["y"] - tgt.y) < tgt.r:
                     sc = self.balls[p["owner"]].cfg.get("scaling", {})
-                    tgt.st["slow"] = min(float(sc.get("slow_cap", 0.6)),
-                                         tgt.st["slow"] + float(sc.get("slow_per_peel", 0.04)))
+                    tgt.st["boost"] = min(float(sc.get("boost_cap", 0.5)),
+                                          tgt.st["boost"] + float(sc.get("boost_per_peel", 0.15)))
                     self.log(type="slip", to=1 - p["owner"], x=round(tgt.x, 1), y=round(tgt.y, 1),
-                             slow=round(tgt.st["slow"], 3))
+                             boost=round(tgt.st["boost"], 3))
                     self.projectiles.remove(p)
 
         # branch hazards
@@ -313,8 +317,8 @@ class Sim:
             for br in self.branches:
                 ex = ARENA_C[0] + math.cos(br["a"]) * ARENA_R * br["len"]
                 ey = ARENA_C[1] + math.sin(br["a"]) * ARENA_R * br["len"]
-                if math.hypot(ex - b.x, ey - b.y) < b.r and self.t >= self.hit_cd:
-                    self.hit_cd = self.t + HIT_COOLDOWN
+                if math.hypot(ex - b.x, ey - b.y) < b.r and self.t >= self.branch_cd:
+                    self.branch_cd = self.t + BRANCH_COOLDOWN
                     owner = next((k for k, x in enumerate(self.balls) if x.id == "brrbrr"), None)
                     if owner is not None:
                         self.contact_damage(self.balls[owner], b)
@@ -336,7 +340,7 @@ class Sim:
                     "balls": [{"x": round(b.x, 1), "y": round(b.y, 1), "hp": round(b.hp),
                                "spin": round(b.st["spin"] % 360, 1),
                                "speed": round(b.st["speed_mult"], 3),
-                               "slow": round(b.st["slow"], 3),
+                               "boost": round(b.st["boost"], 3),
                                "burst": round(b.st["burst"], 2),
                                "panel": b.stats_panel()} for b in self.balls],
                     "proj": [{"k": p["kind"], "x": round(p["x"], 1), "y": round(p["y"], 1)}
