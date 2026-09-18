@@ -66,6 +66,51 @@ visuals can be reworked without changing how fights play out.
    works. Automate later via TikTok's *official* Content Posting API only —
    never third-party bots, which risk the account and its eligibility.
 
+## Where things stand (updated 2026-09-18)
+
+**Steps 1-3 are built and verified. Steps 4-6 are not started.**
+
+- **Balance is done.** All 36 matchups pass `quality()` within 12 seeds (worst
+  case seed 5). Blowouts 11%, min duration 78.5s, median 97.9s, no timeouts.
+  Gate: `python sim/sweep.py` -- run it after any `characters.json` edit.
+- **Renderer works end to end.** ~1.7s of render per second of video, so a
+  fight is ~2.5 min, single-threaded. `--at <seconds>` dumps one PNG in under a
+  second and is the way to iterate on the look; `--preview N` for a short clip.
+- **Repo**: `github.com/Yash-Dighe/brainrot-arena-battles`, **private**.
+  `master` and `balance-pass` are identical; work continues on `master`.
+- **Commit identity must be `yashdighe@gmail.com`** (no dot). The dotted
+  variant `yash.dighe@gmail.com` is NOT verified on the GitHub account and
+  silently fails to link, leaving commits attributed to nobody. Also: never add
+  Claude co-author trailers -- Yash is the only contributor.
+- **Environment**: ffmpeg 9.0.1 at `C:/Users/yashd/tools/ffmpeg/bin`, on the
+  user PATH, built with `libass` (needed for caption burn-in in step 6) plus
+  `libx264`/`libmp3lame`/`libopus`. venv at `.venv`; the only Python dep is
+  Pillow. The renderer finds ffmpeg via `--ffmpeg`, then `$FFMPEG`, then PATH.
+
+### Pick up here, in this order
+
+1. **Character art** -- the single biggest visual upgrade left. All 9 balls are
+   still initials-in-a-circle placeholders. Drop transparent squares at
+   `assets/balls/<id>.png`; the renderer picks them up with no code change.
+   Must be our own renditions, not reposted viral images (see Originality).
+2. **Step 4, audio/SFX** -- drive off the same event log, pitch rising with
+   damage. Royalty-free only. Music stays an off-by-default toggle.
+3. **Step 5, narration** -- event log to an LLM for the script, TTS for voice
+   and word timings, captions burned in.
+4. **Step 6, assembly and manual posting.**
+
+### Known rough edges
+
+- `cappuccino` and `brrbrr` still have `"signature_fx": "TBD"` and
+  `"status": "open"`. `render.py` draws provisional placeholders for them
+  (steam wisps, a bark ring), marked `# (FX: TBD)` in the code -- decide the
+  real FX, then update both `characters.json` and the renderer.
+- Two matchups stay lopsided but still pass: `tungtung vs lirili` and
+  `tungtung vs boneca` (~8/12 and 7/12 blowout seeds). Tung Tung scales purely
+  on time, which is the strongest curve in the roster.
+- Rendering is single-threaded. Fine for one gorgeous video; revisit when
+  throughput matters.
+
 ## Roster status
 
 9 characters in `characters.json`. All abilities are locked. Signature FX are
@@ -119,7 +164,8 @@ rather than by the slow itself.
 ## Open decisions
 
 - Whether music ships at all (see step 4).
-- FX for the two open characters above.
+- FX for the two open characters above (renderer draws placeholders for now).
+- Whether to commission character art or generate it ourselves.
 - Stretch goals, not now: arenas with obstacles, more than 2 balls at once.
   Abilities are written as self-contained modules reacting to events so these
   stay extensions rather than rewrites.
