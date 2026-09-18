@@ -19,7 +19,15 @@ Requires Python 3.10+ and ffmpeg.
     python sim/engine.py --find 20        # search seeds for a competitive fight
     python sim/engine.py                  # random matchup
 
-Writes an event log to `out/<a>_vs_<b>_<seed>.json`. Nothing is drawn yet —
+## Check balance
+
+    python sim/sweep.py                   # all 36 matchups x 12 seeds
+    python sim/sweep.py --a brrbrr -v     # one character, per-matchup detail
+
+Exits non-zero if any matchup can't produce a good fight within the seed
+budget. Run it after editing `characters.json`.
+
+Writes an event log to `out/<a>_vs_<b>_<seed>.json`. Nothing is drawn yet â€”
 the renderer (step 3) is the next thing to build.
 
 Character ids: `tralalero`, `bombardiro`, `tungtung`, `ballerina`, `boneca`,
@@ -29,6 +37,7 @@ Character ids: `tralalero`, `bombardiro`, `tungtung`, `ballerina`, `boneca`,
 
     characters.json    all balance numbers + signature FX (edit this, not code)
     sim/engine.py      step 2 - headless physics, emits event log
+    sim/sweep.py       balance gate - sweeps every matchup, no rendering
     sim/render.py      step 3 - NOT BUILT YET
     assets/balls/      drop <id>.png here for character art
     out/               generated logs and videos (gitignored)

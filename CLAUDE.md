@@ -1,4 +1,4 @@
-# Brainrot Arena — project context
+# Brainrot Arena â€” project context
 
 Automated 1v1 physics ball-battle videos for TikTok (later YouTube Shorts).
 Format reference: `@kinetiq.studios` on Instagram Reels.
@@ -13,16 +13,16 @@ comes from damage ramping.
 
 On screen: character names up top in each ball's color, live HP, floating damage
 numbers on hits, and a per-ball stats panel in the bottom corners (in that
-ball's color) showing its scaling numbers — e.g. `Damage: 3 / Multiplier: x1.43`.
+ball's color) showing its scaling numbers â€” e.g. `Damage: 3 / Multiplier: x1.43`.
 
 ## Non-negotiable constraints
 
 1. **Every video must exceed 60 seconds.** TikTok Creator Rewards only pays on
-   videos one minute or longer. The sim must target ~65–90s and reject fights
+   videos one minute or longer. The sim must target ~65â€“90s and reject fights
    outside that window before rendering.
 2. **Render quality is the #1 priority.** This is the whole product. Smooth 60fps
    motion, squash-and-stretch on impact, glow, trails, clean bold typography,
-   punchy hit feedback. Never trade look for speed — make one gorgeous video
+   punchy hit feedback. Never trade look for speed â€” make one gorgeous video
    first, optimize throughput second.
 3. **Originality.** TikTok demotes and demonetizes content it reads as unoriginal
    or minimally edited. Our edge is that every fight is genuinely unique and the
@@ -33,7 +33,7 @@ ball's color) showing its scaling numbers — e.g. `Damage: 3 / Multiplier: x1.4
 
 ## Content guidance
 
-- Narration is unhinged brainrot commentary — absurd, fried, funny.
+- Narration is unhinged brainrot commentary â€” absurd, fried, funny.
   e.g. "x8.8 body multiplier?? that's not a ball anymore that's a LIFESTYLE"
 - **No explicit drug references.** The vibe should just be enjoyable to someone
   who's high; it never needs to mention it.
@@ -41,29 +41,29 @@ ball's color) showing its scaling numbers — e.g. `Damage: 3 / Multiplier: x1.4
   comments and cuts ad revenue, which would kill the "comment the next matchup"
   engagement loop. The brainrot audience already skews young without aiming at it.
 
-## Architecture — the six-step pipeline
+## Architecture â€” the six-step pipeline
 
 The core discipline: **the sim decides everything, the renderer only draws.**
 The sim never touches pixels; the renderer never rolls damage. This means a
 boring fight is thrown away instantly before any render time is spent, and
 visuals can be reworked without changing how fights play out.
 
-1. **Config** (`characters.json`) — every character's HP, damage and scaling
+1. **Config** (`characters.json`) â€” every character's HP, damage and scaling
    numbers plus their signature FX. All balance lives here, never in code, so a
    character can be tuned without touching the program.
-2. **Sim** (`sim/engine.py`) — headless physics. Runs in a fraction of a second
+2. **Sim** (`sim/engine.py`) â€” headless physics. Runs in a fraction of a second
    and emits a timestamped event log (JSON). Deterministic by seed.
-3. **Render** (`sim/render.py`) — reads the event log, draws every frame, pipes
+3. **Render** (`sim/render.py`) â€” reads the event log, draws every frame, pipes
    to ffmpeg. Where the visual quality work happens.
-4. **Audio** — SFX timed to the same event log (hit pitch rises with damage).
-   Music is an **optional toggle, not a default** — it competes with the
+4. **Audio** â€” SFX timed to the same event log (hit pitch rises with damage).
+   Music is an **optional toggle, not a default** â€” it competes with the
    narrator. Keep it low, duck under the voice, A/B test with and without.
-5. **Narration** — feed the event log to an LLM for the script, then TTS for the
+5. **Narration** â€” feed the event log to an LLM for the script, then TTS for the
    voice + word timings for burned-in captions. Lines are written to land on the
    moment they describe.
-6. **Assembly & posting** — ffmpeg muxes video + SFX + narration, burns captions.
+6. **Assembly & posting** â€” ffmpeg muxes video + SFX + narration, burns captions.
    **Post manually at first** so each video gets eyeballed and we learn what
-   works. Automate later via TikTok's *official* Content Posting API only —
+   works. Automate later via TikTok's *official* Content Posting API only â€”
    never third-party bots, which risk the account and its eligibility.
 
 ## Roster status
@@ -71,8 +71,8 @@ visuals can be reworked without changing how fights play out.
 9 characters in `characters.json`. All abilities are locked. Signature FX are
 locked for 7; still `"status": "open"` and needing FX ideas:
 
-- **Cappuccino Assassino** — caffeinated combos that get longer/faster
-- **Brr Brr Patapim** — spreading branches that raise contact damage
+- **Cappuccino Assassino** â€” caffeinated combos that get longer/faster
+- **Brr Brr Patapim** â€” spreading branches that raise contact damage
 
 ## Conventions
 
@@ -80,22 +80,37 @@ locked for 7; still `"status": "open"` and needing FX ideas:
 - Balls are plain colored circles with the character's image inside. Drop art at
   `assets/balls/<id>.png` (transparent, square); a colored placeholder is drawn
   if missing.
-- Event log schema is the contract between sim and render — change it in both.
+- `sim/sweep.py` runs every matchup over many seeds and is the balance gate.
+- Event log schema is the contract between sim and render â€” change it in both.
 - `out/` holds generated logs and videos and is gitignored.
 
-## Known balance issue (first task)
+## Balance status
 
-With `TAU = 13.5` every matchup reliably clears the 60s floor (min observed
-62.9s, median ~82s), but **16 of 36 matchups are blowouts**. Cause: Bombardiro
-and Brr Brr both deal damage that does not require a collision — bombs and
-branches are free damage, while everyone else has to actually connect.
+All 36 matchups pass `quality()` within 12 seeds (worst case: seed 5), verified
+by `python sim/sweep.py`. Blowouts are down from 58% of sims to 13%, no sim
+falls under the 62s floor, and the median fight is ~99s. Re-run the sweep after
+any balance edit -- it exits non-zero if a matchup regresses.
 
-Fix by tuning `characters.json` only (no code changes):
-- `bombardiro.scaling.bomb_damage` / `bomb_interval_min_sec`
-- `brrbrr.scaling.damage_per_branch` / `branch_interval_min_sec`
+Two engine invariants came out of that work and are worth knowing before tuning:
 
-Verify with a sweep over all 36 matchups checking duration stays >62s and
-`quality()` passes within ~12 seeds.
+- **Cooldowns are per-source.** `hit_cd` covers ball-vs-ball; `BRANCH_COOLDOWN`
+  covers Brr Brr's branches. They were shared, which let 11 static branches
+  monopolise the cooldown and starve the opponent of their own hits (135 hits
+  to 22). If another non-collision hazard is added, give it its own cooldown.
+- **`boost` decays at `BOOST_DECAY_PER_SEC` (0.15/sec)**, so a stack has to be
+  large enough to outlive that or it is a no-op. Chimpanzini's peels originally
+  applied a 0.04 *slow* that evaporated in 0.27s -- his ability did effectively
+  nothing, and `bonus_dmg_on_slip` almost never fired. Same trap applies to any
+  new stacking effect.
+
+**Never slow the opponent as a mechanic.** Fewer collisions means fewer hits for
+*both* balls, which hands the fight to whoever scales on **time** (Tralalero,
+Tungtung, Ballerina) over whoever scales on **contact**. Chimpanzini's peels now
+make the enemy skid *faster* rather than slower: more collisions, which feeds
+his contact scaling, and he hits harder while they're skidding. It also reads
+better -- a banana peel should send you flying. Lirili's time-warp is the one
+remaining slow, and it is balanced by a large in-burst damage multiplier
+rather than by the slow itself.
 
 ## Open decisions
 
