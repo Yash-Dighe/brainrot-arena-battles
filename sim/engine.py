@@ -340,6 +340,10 @@ class Sim:
                     "balls": [{"x": round(b.x, 1), "y": round(b.y, 1), "hp": round(b.hp),
                                "spin": round(b.st["spin"] % 360, 1),
                                "speed": round(b.st["speed_mult"], 3),
+                               # ability scalars the renderer drives FX from, so it
+                               # never has to parse them back out of panel strings
+                               "buff": round(b.st["buff"], 3),
+                               "spin_rate": round(b.st["spin_rate"], 3),
                                "boost": round(b.st["boost"], 3),
                                "burst": round(b.st["burst"], 2),
                                "panel": b.stats_panel()} for b in self.balls],
