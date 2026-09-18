@@ -87,17 +87,35 @@ visuals can be reworked without changing how fights play out.
   `libx264`/`libmp3lame`/`libopus`. venv at `.venv`; the only Python dep is
   Pillow. The renderer finds ffmpeg via `--ffmpeg`, then `$FFMPEG`, then PATH.
 
+**Research is done.** `docs/design-plan.md` holds the synthesized plan from three
+research passes (retention, visual design, character art + IP), ordered by
+priority with verified-vs-hypothesis clearly marked. Read it before doing visual
+or format work -- it supersedes guesswork on layout, palette, pacing and audio.
+
+Decisions taken 2026-09-18:
+- **Ship all nine characters as-is.** The IP risk was reviewed and knowingly
+  accepted. There is active federal litigation over these characters and the
+  live claim is **trademark, on the names** -- which our "own renditions"
+  strategy does NOT mitigate. See `docs/design-plan.md` for the full position.
+- **Character art is drawn in code** (`tools/make_art.py`), not AI-generated:
+  consistent by construction, unambiguously human-authored, $0.
+
 ### Pick up here, in this order
 
-1. **Character art** -- the single biggest visual upgrade left. All 9 balls are
-   still initials-in-a-circle placeholders. Drop transparent squares at
-   `assets/balls/<id>.png`; the renderer picks them up with no code change.
-   Must be our own renditions, not reposted viral images (see Originality).
-2. **Step 4, audio/SFX** -- drive off the same event log, pitch rising with
-   damage. Royalty-free only. Music stays an off-by-default toggle.
-3. **Step 5, narration** -- event log to an LLM for the script, TTS for voice
+1. **Tier 1 of `docs/design-plan.md`** -- structural defects, not preferences.
+   The bottom stats panels render at y=1636 and are invisible behind platform
+   chrome; the HP bar conveys nothing for the first ~40s; four colour pairs are
+   indistinguishable; Tung Tung's sprite rotation would destroy any art we give
+   him. All display-side, no balance risk.
+2. **Character art** -- drawn in code per the spec in `docs/design-plan.md`.
+   Note art displays at 121px, not 156px, and square corners are clipped.
+3. **Step 4, audio/SFX** -- build it as a *tonal* system (hits on ascending
+   scale steps that resolve), not just pitch-shifted thumps. Original motif
+   only. Music ships ON by default in v1, since there is no narrator to compete
+   with yet.
+4. **Step 5, narration** -- event log to an LLM for the script, TTS for voice
    and word timings, captions burned in.
-4. **Step 6, assembly and manual posting.**
+5. **Step 6, assembly and manual posting.**
 
 ### Known rough edges
 
