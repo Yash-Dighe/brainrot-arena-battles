@@ -14,7 +14,7 @@ number on screen is read out of the log; this file only turns those numbers
 into pixels. If a value isn't in the log, it isn't drawn.
 """
 import argparse, json, math, os, shutil, subprocess, sys, time
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageFilter
 
 W, H = 1080, 1920
 FPS = 60
@@ -24,21 +24,38 @@ ART_DIR = os.path.join(ROOT, "assets", "balls")
 # ------------------------------------------------------------------- palette
 # One ball colour per character, themed to who they are. This is the only
 # place colours live -- retune here, nowhere else.
+# Spread on hue AND luma. Four of the old nine sat in the orange/gold wedge --
+# tungtung vs cappuccino were 5 degrees of hue and 7 luma apart, i.e. the same
+# ball twice. Only two are ever on screen, so what matters is all 36 PAIRS.
 COLORS = {
     "tralalero":   "#2FA6FF",   # shark blue
-    "bombardiro":  "#C7A32E",   # bomber olive-gold
-    "tungtung":    "#D2863A",   # drum wood
-    "ballerina":   "#FF5FA8",   # ballet pink
-    "boneca":      "#9BE33A",   # frog lime
-    "cappuccino":  "#E08A4B",   # crema orange
-    "brrbrr":      "#5FD07A",   # leaf green
-    "chimpanzini": "#FFD21E",   # banana yellow
+    "bombardiro":  "#E01E3C",   # ordnance red (was olive-gold: collided x3)
+    "tungtung":    "#C8743C",   # drum wood -- now the only orange
+    "ballerina":   "#FF4FA8",   # ballet magenta
+    "boneca":      "#A6F03A",   # frog lime
+    "cappuccino":  "#F5E3C8",   # crema cream (foam IS cream; frees the orange)
+    "brrbrr":      "#17D9C4",   # cold teal (was a second green)
+    "chimpanzini": "#FFC61E",   # banana yellow
     "lirili":      "#9B6BFF",   # clock violet
 }
+# When a matchup's two primaries are too close to tell apart, fighter 1 swaps
+# to its alt, which sits on the far side of the luma split from its primary.
+ALT_COLORS = {
+    "tralalero":   "#7FD4FF",
+    "bombardiro":  "#FF6B5A",
+    "tungtung":    "#F0A45C",
+    "ballerina":   "#FF77D6",
+    "boneca":      "#4FA81E",
+    "cappuccino":  "#B89878",
+    "brrbrr":      "#0B8F84",
+    "chimpanzini": "#C98A00",
+    "lirili":      "#C9A6FF",
+}
 DEFAULT_COLOR = "#DDDDDD"
+DEFAULT_ALT = "#9AA0B5"
 
-BG_TOP, BG_BOT = (10, 12, 24), (22, 17, 38)
-ARENA_FILL = (26, 30, 54)
+BG_TOP, BG_BOT = (10, 12, 24), (34, 28, 62)
+ARENA_FILL = (8, 9, 18)
 ARENA_EDGE = (120, 140, 200)
 INK = (236, 240, 255)
 DIM = (150, 158, 190)
@@ -47,7 +64,7 @@ DIM = (150, 158, 190)
 # All in frames at 60fps. These are look knobs, tune freely.
 FLASH_F = 5          # white flash on the ball that got hit
 SQUASH_F = 11        # squash-and-stretch deform
-DMG_F = 58           # damage number pop + float + fade
+DMG_F = 44           # damage number pop + float + fade
 SHAKE_F = 13         # screen shake decay
 BOOM_F = 30          # explosion shockwave ring
 SLIP_F = 34          # banana slip burst
@@ -57,6 +74,16 @@ WALL_F = 9
 BRANCH_F = 26
 PIROU_F = 22
 OUTRO_SEC = 2.4      # winner card held after the KO
+
+# Platform-chrome safe areas, as the union of TikTok's and Shorts' worst case.
+# Anything persistent and load-bearing lives inside x[HUD_X0,HUD_X1],
+# y[DEAD_TOP,DEAD_BOT]. The old HUD broke both ends: the first fighter's name
+# sat at y=92 under the status bar, and the stats panels at y=1636 were behind
+# the caption block, i.e. invisible to every viewer.
+DEAD_TOP = 210       # status bar / notch / For-You tabs
+DEAD_BOT = 1500      # username + caption + sound ticker + CTA
+HUD_X0, HUD_X1 = 60, 960   # 960 keeps clear of the right action rail
+CAP_BAND = (1180, 1420)    # reserved for burned-in captions in step 5
 
 
 # --------------------------------------------------------------------- utils
@@ -80,6 +107,41 @@ def shade(c, f):
 
 def ease_out(t):
     return 1.0 - (1.0 - t) ** 3
+
+
+def luma(c):
+    """Rec.709 luma, 0-255. Grayscale separation is the standard proxy for
+    'still readable under any colour-blindness', so we gate on it."""
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+
+def hue_deg(c):
+    mx, mn = max(c), min(c)
+    if mx == mn:
+        return 0.0
+    r, g, b = c
+    if mx == r:
+        h = (g - b) / (mx - mn) % 6
+    elif mx == g:
+        h = (b - r) / (mx - mn) + 2
+    else:
+        h = (r - g) / (mx - mn) + 4
+    return h * 60.0
+
+
+def hue_gap(a, b):
+    d = abs(hue_deg(a) - hue_deg(b))
+    return min(d, 360.0 - d)
+
+
+def pick_colors(ids):
+    """Two balls that look alike make an unwatchable fight. Fighter 0 keeps its
+    primary; fighter 1 swaps to its alt if the pair is too close to separate."""
+    c0 = rgb(COLORS.get(ids[0], DEFAULT_COLOR))
+    c1 = rgb(COLORS.get(ids[1], DEFAULT_COLOR))
+    if abs(luma(c0) - luma(c1)) < 45 and hue_gap(c0, c1) < 30:
+        c1 = rgb(ALT_COLORS.get(ids[1], DEFAULT_ALT))
+    return [c0, c1]
 
 
 # --------------------------------------------------------------------- fonts
@@ -215,8 +277,8 @@ class BallArt:
     the finished sprite, which is what keeps 5,400 frames tractable.
     """
 
-    def __init__(self, cid, name, radius):
-        self.color = rgb(COLORS.get(cid, DEFAULT_COLOR))
+    def __init__(self, cid, name, radius, color):
+        self.color = color
         n = int(radius) * 2
         big = Image.new("RGBA", (n * SS, n * SS), (0, 0, 0, 0))
         d = ImageDraw.Draw(big)
@@ -278,19 +340,22 @@ class BallArt:
                stroke_width=int(6 * SS), stroke_fill=shade(self.color, 0.15) + (255,))
         return layer.resize((n, n), Image.LANCZOS)
 
-    def deformed(self, k, ang, spin, flash=False):
-        """Squash along `ang`, stretch across it. k=0 returns the base sprite."""
+    def deformed(self, k, ang, flash=False):
+        """Squash along `ang`, stretch across it. k=0 returns the base sprite.
+
+        BICUBIC, not BILINEAR: this is a 3-resample chain on a disc with a
+        high-contrast rim, and bilinear visibly softens the very edge that
+        makes the ball read as solid.
+        """
         s = self.flash if flash else self.sprite
-        if spin:
-            s = s.rotate(spin, Image.BILINEAR)
         if k < 0.015:
             return s
         deg = math.degrees(ang)
-        s = s.rotate(-deg, Image.BILINEAR, expand=True)
+        s = s.rotate(-deg, Image.BICUBIC, expand=True)
         w = max(4, int(s.width * (1 + k)))
         h = max(4, int(s.height * (1 - k * 0.85)))
-        s = s.resize((w, h), Image.BILINEAR)
-        return s.rotate(deg, Image.BILINEAR, expand=True)
+        s = s.resize((w, h), Image.BICUBIC)
+        return s.rotate(deg, Image.BICUBIC, expand=True)
 
 
 # ------------------------------------------------------- event -> effect prep
@@ -321,17 +386,23 @@ class Effects:
                               "jackpot": bool(e.get("jackpot"))})
                 if e.get("jackpot"):
                     self._add(f, {"k": "jackpot", "dur": JACKPOT_F, "by": e["by"]})
-                amp = 4 + rel * rel * 34
-                for i in range(SHAKE_F):
-                    j = f + i
-                    if j < len(self.shake):
-                        self.shake[j] = max(self.shake[j], amp * (1 - i / SHAKE_F) ** 2)
+                # No floor. A constant 4px jitter on every one of ~150 hits
+                # reads as a shaky camera, not as impact -- shake has to be
+                # absent most of the time for it to mean anything.
+                if rel >= 0.20:
+                    amp = rel * rel * 46
+                    dur = 10 + int(round(rel * 8))
+                    for i in range(dur):
+                        j = f + i
+                        if j < len(self.shake):
+                            self.shake[j] = max(self.shake[j],
+                                                amp * (1 - i / dur) ** 2)
             elif t == "explosion":
                 self._add(f, {"k": "boom", "dur": BOOM_F, "x": e["x"], "y": e["y"]})
                 for i in range(SHAKE_F):
                     j = f + i
                     if j < len(self.shake):
-                        self.shake[j] = max(self.shake[j], 16 * (1 - i / SHAKE_F) ** 2)
+                        self.shake[j] = max(self.shake[j], 26 * (1 - i / SHAKE_F) ** 2)
             elif t == "slip":
                 self._add(f, {"k": "slip", "dur": SLIP_F, "x": e["x"], "y": e["y"]})
             elif t == "combo":
@@ -347,7 +418,7 @@ class Effects:
                 for i in range(30):
                     j = f + i
                     if j < len(self.shake):
-                        self.shake[j] = max(self.shake[j], 30 * (1 - i / 30) ** 2)
+                        self.shake[j] = max(self.shake[j], 54 * (1 - i / 36) ** 2)
 
     @staticmethod
     def _merge_hits(events):
@@ -403,12 +474,33 @@ class Renderer:
         self.arena = self.meta["arena"]
         self.ball_r = self.meta["ball_r"]
         self.fighters = self.meta["fighters"]
-        self.colors = [rgb(COLORS.get(f["id"], DEFAULT_COLOR)) for f in self.fighters]
         self.ids = [f["id"] for f in self.fighters]
-        self.art = [BallArt(f["id"], f["name"], self.ball_r) for f in self.fighters]
+        self.colors = pick_colors(self.ids)
+        self.art = [BallArt(f["id"], f["name"], self.ball_r, self.colors[i])
+                    for i, f in enumerate(self.fighters)]
         self.fx = Effects(log, len(self.frames))
         self.bg = self._background()
         self.shake_dirs = [(math.cos(i * 2.399), math.sin(i * 2.399)) for i in range(64)]
+        self.ghost = self._ghost_series()
+
+    def _ghost_series(self):
+        """Lagging HP fraction per frame, for the chip bar.
+
+        With a 90k pool an early hit moves the real bar by 0.006% -- sub-pixel,
+        so for the first ~40s the bar tells the viewer nothing. A second bar
+        that trails the real one by ~0.4s turns every one of ~150 hits into a
+        visible red sliver draining away. Precomputed rather than accumulated
+        per call, so --at can render any frame in isolation.
+        """
+        out, g = [], [1.0, 1.0]
+        for f in self.frames:
+            row = []
+            for i in range(2):
+                frac = clamp(f["balls"][i]["hp"] / self.fighters[i]["max_hp"], 0, 1)
+                g[i] = frac if frac > g[i] else g[i] + (frac - g[i]) * 0.06
+                row.append(max(g[i], frac))
+            out.append(row)
+        return out
 
     # -- static layers -------------------------------------------------------
     def _background(self):
@@ -417,12 +509,34 @@ class Renderer:
         for y in range(0, H, 4):                      # vertical gradient
             d.rectangle([0, y, W, y + 4], fill=mix(BG_TOP, BG_BOT, y / H))
         cx, cy, r = self.arena["cx"], self.arena["cy"], self.arena["r"]
-        # arena floor: soft glow pad, dark disc, faint inner rings
+        # The arena reads as a PIT: lifted at the rim, falling to near-black at
+        # the centre. The old flat fill was ~3 luma off the background, so the
+        # floor did not visually exist. The old inner rings were ~5 code values
+        # and would be quantized away by the platform re-encode -- dropped.
         paste(bg, glow((70, 90, 190), int(r * 2.9), 110), cx, cy)
         paste(bg, disc((0, 0, 0), int(r * 2) + 20, 255), cx, cy, 0.55)
-        paste(bg, disc(ARENA_FILL, int(r * 2), 255), cx, cy)
-        for f in (0.35, 0.62, 0.86):
-            paste(bg, ring(shade(ARENA_FILL, 1.5), int(r * 2 * f), 2), cx, cy, 0.5)
+        rim, steps = (30, 32, 60), 48
+        for k in range(steps):
+            f = 1.0 - k / steps
+            paste(bg, disc(mix(rim, ARENA_FILL, k / steps),
+                           max(2, int(r * 2 * f))), cx, cy)
+
+        # Vignette the platform-chrome dead zones: confirms nothing lives there
+        # and hands the encoder flat, cheap regions.
+        vg = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        dv = ImageDraw.Draw(vg)
+        for y in range(0, DEAD_TOP, 4):
+            dv.rectangle([0, y, W, y + 4],
+                         fill=(0, 0, 0, int(115 * (1 - y / DEAD_TOP))))
+        for y in range(DEAD_BOT, H, 4):
+            dv.rectangle([0, y, W, y + 4],
+                         fill=(0, 0, 0, int(115 * (y - DEAD_BOT) / (H - DEAD_BOT))))
+        bg = Image.alpha_composite(bg.convert("RGBA"), vg).convert("RGB")
+
+        # Static noise kills gradient banding at delivery bitrate, and because
+        # it is identical every frame it costs bits only in the I-frame.
+        nz = Image.effect_noise((W, H), 6).convert("RGB")
+        bg = Image.blend(bg, ImageChops.add(bg, nz, scale=1, offset=-128), 0.06)
         return bg
 
     # -- world helpers -------------------------------------------------------
@@ -598,8 +712,8 @@ class Renderer:
                             x + math.cos(a) * rr, y + math.sin(a) * rr],
                            fill=self.colors[fx["by"]] + (int(220 * (1 - p)),), width=7)
                 sc = 1.0 + 0.25 * (1 - ease_out(min(1, p * 4)))
-                d.text((x, y - self.ball_r - 185 - p * 40),
-                       f"COMBO x{fx['n']}", font=font(int(58 * sc)), anchor="mm",
+                d.text((x, max(560, y - self.ball_r - 310 - p * 40)),
+                       f"COMBO x{fx['n']}", font=font(int(54 * sc)), anchor="mm",
                        fill=(255, 245, 230, int(255 * (1 - p ** 2))),
                        stroke_width=8, stroke_fill=(40, 20, 10, int(255 * (1 - p ** 2))))
 
@@ -610,27 +724,42 @@ class Renderer:
             age = fi - fx["f0"]
             p = age / fx["dur"]
             rel = fx["rel"]
-            pop = 1.0 + 0.30 * (1 - ease_out(min(1.0, age / 7.0)))
-            size = int((26 + rel * 56) * pop)
-            col = mix(mix((255, 255, 255), (255, 210, 60), rel * 1.6),
-                      (255, 70, 55), max(0.0, rel * 1.9 - 0.9))
+            pop = 1.0 + 0.28 * (1 - ease_out(min(1.0, age / 5.0)))
+            # 26px was below every mobile legibility floor; early numbers were
+            # simply not read. Magnitude now reads through SIZE, not through a
+            # dark red fill -- saturated red carries its meaning in the
+            # half-resolution chroma plane and mushes at platform bitrate, so
+            # the ramp stays high-luma all the way to the top.
+            size = int((48 + (rel ** 1.4) * 68) * pop)
+            col = mix(mix((255, 255, 255), (255, 227, 107), rel * 1.6),
+                      (255, 162, 61), max(0.0, rel * 1.9 - 0.9))
             a = int(255 * clamp((1 - p) * 2.2, 0, 1))
             # ball 0's damage always drifts left, ball 1's right, so the two
             # numbers from a single collision never sit on top of each other
             side = -1 if fx["to"] == 0 else 1
-            yy = (fx["y"] + sy - 80 - ease_out(p) * 130
-                  - (0 if fx["to"] == 0 else 96))
-            yy = max(yy, 520)                      # never climb into the HUD
+            yy = (fx["y"] + sy - 70 - ease_out(p) * 120
+                  - (0 if fx["to"] == 0 else 158))
+            yy = clamp(yy, 560, 1400)              # stay inside the arena band
             txt = f"-{fx['dmg']:,}"
             f = font(size)
-            stroke = max(4, size // 12)
-            # clamp on the real text width, not a fixed margin -- late-game
-            # numbers get wide enough to run off frame otherwise
-            half = d.textlength(txt, font=f) / 2 + stroke + 12
-            xx = clamp(fx["x"] + sx + side * 165, half, W - half)
+            stroke = max(5, size // 9)
+            # Shrink to fit before clamping. A late-game number can be wider
+            # than the frame, and clamping to [half, W-half] is meaningless
+            # once half > W/2 -- it used to shove the text off the left edge.
+            while size > 40 and d.textlength(txt, font=f) + 2 * stroke > W - 48:
+                size -= 4
+                f = font(size)
+                stroke = max(5, size // 9)
+            half = d.textlength(txt, font=f) / 2 + stroke + 28
+            lo, hi = half, W - half
+            xx = clamp(fx["x"] + sx + side * 165, lo, hi) if lo <= hi else W / 2
+            # Hard offset shadow under a pure-black stroke: depth, and it
+            # survives compression far better than a soft glow would.
+            d.text((xx, yy + 5), txt, font=f, anchor="mm",
+                   fill=(0, 0, 0, int(a * 0.7)))
             d.text((xx, yy), txt, font=f, anchor="mm",
                    fill=col + (a,), stroke_width=stroke,
-                   stroke_fill=(20, 8, 20, a))
+                   stroke_fill=(0, 0, 0, a))
             if fx["kind"] == "bomb_hit" and p < 0.5:
                 d.text((xx, yy - size * 0.85), "BOOM", font=font(40),
                        anchor="mm", fill=(255, 170, 60, a), stroke_width=6,
@@ -649,54 +778,52 @@ class Renderer:
                fill=(40, 30, 60, int(255 * alpha)))
 
     # -- hud -----------------------------------------------------------------
-    def draw_hud(self, im, frame):
+    def draw_hud(self, im, frame, fi):
         d = ImageDraw.Draw(im, "RGBA")
         for i, f in enumerate(self.fighters):
             col = self.colors[i]
             b = frame["balls"][i]
-            y0 = 92 + i * 126
-            d.text((56, y0), f["name"].upper(),
-                   font=fit_font(f["name"].upper(), 700, 50), anchor="ls",
+            top = 216 + i * 118
+            base = top + 42
+            name = f["name"].upper()
+            d.text((HUD_X0, base), name, font=fit_font(name, 600, 52), anchor="ls",
                    fill=col + (255,), stroke_width=5, stroke_fill=(8, 8, 16, 220))
-            d.text((1024, y0), f"{int(b['hp']):,}", font=font(44), anchor="rs",
-                   fill=INK + (255,), stroke_width=5, stroke_fill=(8, 8, 16, 220))
-            bx0, bx1, by0, by1 = 56, 1024, y0 + 18, y0 + 46
-            d.rounded_rectangle([bx0, by0, bx1, by1], radius=14,
-                                fill=(255, 255, 255, 26), outline=(255, 255, 255, 46),
-                                width=2)
+
+            # Percentage, not the raw 90,000 pool. "12%" is a number a viewer
+            # can feel; "10,842" against 90,000 is arithmetic homework.
             frac = clamp(b["hp"] / f["max_hp"], 0, 1)
+            d.text((HUD_X1, base), f"{frac * 100:.0f}%", font=font(48), anchor="rs",
+                   fill=INK + (255,), stroke_width=5, stroke_fill=(8, 8, 16, 220))
+
+            by0, by1 = top + 56, top + 84
+            d.rounded_rectangle([HUD_X0, by0, HUD_X1, by1], radius=14,
+                                fill=(255, 255, 255, 40),
+                                outline=(255, 255, 255, 110), width=2)
+            span = HUD_X1 - HUD_X0
+            gf = self.ghost[fi][i] if fi < len(self.ghost) else frac
+            if gf > 0.002:                         # chip bar, drains behind
+                d.rounded_rectangle([HUD_X0, by0, HUD_X0 + span * gf, by1],
+                                    radius=14, fill=(226, 64, 72, 255))
             if frac > 0.002:
-                w = bx0 + (bx1 - bx0) * frac
-                d.rounded_rectangle([bx0, by0, w, by1], radius=14, fill=col + (255,))
-                d.rounded_rectangle([bx0 + 4, by0 + 4, max(bx0 + 10, w - 4), by0 + 12],
-                                    radius=5, fill=mix(col, (255, 255, 255), 0.45) + (140,))
+                w = HUD_X0 + span * frac
+                d.rounded_rectangle([HUD_X0, by0, w, by1], radius=14, fill=col + (255,))
+                d.rounded_rectangle([HUD_X0 + 4, by0 + 4, max(HUD_X0 + 10, w - 4),
+                                     by0 + 12], radius=5,
+                                    fill=mix(col, (255, 255, 255), 0.45) + (200,))
 
-        # round clock, sitting in the gap between the bars and the arena
+            # Scaling numbers inline, not in an occluded bottom corner. The
+            # sim owns these strings; we only join them.
+            chip = "  ".join(f"{lbl.upper()} {val}" for lbl, val in b["panel"])
+            d.text((HUD_X0, top + 112), chip, font=font(32), anchor="ls",
+                   fill=mix(col, (255, 255, 255), 0.25) + (235,),
+                   stroke_width=4, stroke_fill=(8, 8, 16, 210))
+
+        # Clock demoted: nobody watches for it, and it was 72px in the most
+        # valuable slot on the frame. Parked between the HUD and the arena.
         secs = frame["t"]
-        d.text((W / 2, 404), f"{int(secs) // 60}:{int(secs) % 60:02d}", font=font(72),
-               anchor="mm", fill=INK + (200,), stroke_width=6,
-               stroke_fill=(8, 8, 16, 200))
-        d.line([W / 2 - 250, 404, W / 2 - 120, 404], fill=(255, 255, 255, 40), width=3)
-        d.line([W / 2 + 120, 404, W / 2 + 250, 404], fill=(255, 255, 255, 40), width=3)
-
-        # bottom-corner stats panels, each in that ball's colour
-        for i in range(2):
-            col = self.colors[i]
-            rows = frame["balls"][i]["panel"]
-            left = i == 0
-            x = 58 if left else 1022
-            anchor = "ls" if left else "rs"
-            y = 1636
-            d.text((x, y), self.fighters[i]["name"].split()[0].upper(), font=font(34),
-                   anchor=anchor, fill=shade(col, 0.8) + (210,),
-                   stroke_width=4, stroke_fill=(8, 8, 16, 200))
-            y += 62
-            for label, value in rows:
-                d.text((x, y), str(label).upper(), font=font(30), anchor=anchor,
-                       fill=DIM + (230,), stroke_width=4, stroke_fill=(8, 8, 16, 200))
-                d.text((x, y + 52), str(value), font=font(54), anchor=anchor,
-                       fill=col + (255,), stroke_width=6, stroke_fill=(8, 8, 16, 220))
-                y += 118
+        d.text((W / 2, 495), f"{int(secs) // 60}:{int(secs) % 60:02d}",
+               font=font(40), anchor="mm", fill=DIM + (170,),
+               stroke_width=4, stroke_fill=(8, 8, 16, 190))
 
     def draw_winner(self, im, p):
         """Winner card, faded in over the outro tail."""
@@ -771,11 +898,14 @@ class Renderer:
             paste(im, glow(self.colors[i], int(self.ball_r * 3.6), 230), x, y, 0.95)
             self.draw_signature(im, fi, i, x, y, frame)
             kk, ang = squash.get(i, (0.0, 0.0))
-            spr = self.art[i].deformed(kk, ang, b.get("spin", 0.0))
+            # Deliberately NOT passing spin: tungtung is the only ball that
+            # accumulates it, and he reaches ~6 rev/sec, which would blend any
+            # character art into a smear. His bat arc spins instead.
+            spr = self.art[i].deformed(kk, ang)
             paste(im, spr, x, y)
             fl = flash.get(i, 0.0)
             if fl > 0:
-                paste(im, self.art[i].deformed(kk, ang, b.get("spin", 0.0), True),
+                paste(im, self.art[i].deformed(kk, ang, True),
                       x, y, fl)
 
         self.draw_effects(im, fi, frame, sx, sy, fx_list)
@@ -784,7 +914,7 @@ class Renderer:
             ImageDraw.Draw(im, "RGBA").rectangle(
                 [0, 0, W, H], fill=(60, 130, 255, 46))
 
-        self.draw_hud(im, frame)
+        self.draw_hud(im, frame, fi)
         if outro_p is not None:
             self.draw_winner(im, outro_p)
         return im
@@ -811,8 +941,19 @@ def open_encoder(ffmpeg, out_path, fps):
     cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
            "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
            "-r", str(fps), "-i", "-", "-an",
-           "-c:v", "libx264", "-preset", "medium", "-crf", "17",
-           "-pix_fmt", "yuv420p", "-movflags", "+faststart", out_path]
+           # preset slow is free here: Pillow is the bottleneck, not x264.
+           "-c:v", "libx264", "-preset", "slow", "-crf", "16",
+           "-profile:v", "high", "-level", "4.2",
+           "-pix_fmt", "yuv420p", "-color_range", "tv",
+           # Tag the colour space. Left untagged, the platform transcoder
+           # guesses, and a BT.601 guess visibly shifts our ball colours.
+           "-colorspace", "bt709", "-color_primaries", "bt709",
+           "-color_trc", "bt709",
+           # aq-mode 3 biases quantization toward dark regions, which is
+           # exactly our case: a near-black arena carrying all the detail.
+           "-g", "120", "-bf", "3",
+           "-x264-params", "aq-mode=3:aq-strength=1.1",
+           "-movflags", "+faststart", out_path]
     return subprocess.Popen(cmd, stdin=subprocess.PIPE)
 
 
