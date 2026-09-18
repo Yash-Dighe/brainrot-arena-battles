@@ -1,23 +1,28 @@
 """
 Balance sweep: run every matchup over a range of seeds and report whether the
-roster holds up. Draws nothing, writes nothing -- this is a tuning instrument
-for characters.json, not part of the render pipeline.
+roster holds up. Draws nothing and writes nothing -- this is a tuning
+instrument for characters.json, not part of the render pipeline.
 
-  python sim/sweep.py                  # all 36 matchups, 12 seeds each
-  python sim/sweep.py --seeds 20 -v    # per-matchup detail
+  python sim/sweep.py                  # all 36 matchups, 40 seeds each
+  python sim/sweep.py --seeds 80 -v    # per-matchup detail
   python sim/sweep.py --a bombardiro   # only matchups involving one character
 
-A matchup PASSES if at least one seed satisfies engine.quality() -- that is the
-same bar the renderer's seed search uses, so "passes within N seeds" means
+A matchup PASSES if at least one seed clears every gate in sim/score.py. That
+is the same bar `engine.find_best` uses, so "passes within N seeds" means
 "--find N will reliably produce a video for this pairing".
+
+Since we now render the best-scoring fight rather than the first acceptable
+one, the useful signal is not just whether a matchup passes but how GOOD its
+best fight is -- a matchup whose ceiling is 0.62 makes worse videos than one
+that reaches 0.95, even though both "pass".
 """
 import argparse, itertools, os, statistics, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine
+import score as score_mod
 
 BLOWOUT_HP_FRAC = 0.70      # winner keeping more than this = no drama
-FLOOR_SEC = 62.0            # the 60s TikTok floor, with margin
 
 
 def sweep_matchup(roster, a_id, b_id, seeds):
@@ -25,37 +30,42 @@ def sweep_matchup(roster, a_id, b_id, seeds):
     rows = []
     for s in range(seeds):
         sim = engine.run_fight(roster, a_id, b_id, s)
-        ok, secs, frac = engine.quality(sim)
-        rows.append({"seed": s, "ok": ok, "secs": secs, "frac": frac})
+        ev = score_mod.evaluate(sim)
+        rows.append({"seed": s, "ok": ev["ok"], "secs": ev["secs"],
+                     "frac": ev.get("final_frac", 1.0), "score": ev["score"],
+                     "why": ev["why"]})
     passing = [r for r in rows if r["ok"]]
     return {
         "a": a_id, "b": b_id, "rows": rows,
         "passed": bool(passing),
         "first_pass": passing[0]["seed"] if passing else None,
+        "best": max((r["score"] for r in passing), default=0.0),
         "pass_rate": len(passing) / len(rows),
         "min_secs": min(r["secs"] for r in rows),
         "med_secs": statistics.median(r["secs"] for r in rows),
         "med_frac": statistics.median(r["frac"] for r in rows),
         "blowouts": sum(1 for r in rows if r["frac"] > BLOWOUT_HP_FRAC),
-        "short": sum(1 for r in rows if r["secs"] < FLOOR_SEC),
-        "long": sum(1 for r in rows if r["secs"] > 105.0),
+        "short": sum(1 for r in rows if r["secs"] < score_mod.MIN_SEC),
+        "long": sum(1 for r in rows if r["secs"] > score_mod.MAX_SEC),
     }
 
 
-def why_failed(m):
-    bits = []
-    if m["short"]:
-        bits.append(f"{m['short']}/{len(m['rows'])} under {FLOOR_SEC:.0f}s")
-    if m["long"]:
-        bits.append(f"{m['long']}/{len(m['rows'])} over 105s")
-    if m["blowouts"]:
-        bits.append(f"{m['blowouts']}/{len(m['rows'])} blowouts")
-    return ", ".join(bits) or "no seed cleared quality()"
+def common_failures(m, k=3):
+    """Which gates this matchup trips most often, so tuning has a target."""
+    tally = {}
+    for r in m["rows"]:
+        for w in filter(None, r["why"].split(", ")):
+            # keep two words: "no late drama" and "no real swing" are very
+            # different diagnoses and both start with "no"
+            key = " ".join(w.split()[:2])
+            tally[key] = tally.get(key, 0) + 1
+    top = sorted(tally.items(), key=lambda kv: -kv[1])[:k]
+    return ", ".join(f"{name} x{n}" for name, n in top) or "-"
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seeds", type=int, default=12, help="seeds per matchup")
+    ap.add_argument("--seeds", type=int, default=40, help="seeds per matchup")
     ap.add_argument("--a", default=None, help="only matchups involving this id")
     ap.add_argument("-v", "--verbose", action="store_true", help="print every matchup")
     args = ap.parse_args()
@@ -67,7 +77,9 @@ def main():
     if not pairs:
         sys.exit(f"unknown character {args.a!r}; options: {', '.join(ids)}")
 
-    print(f"TAU={engine.TAU}  {len(pairs)} matchups x {args.seeds} seeds "
+    print(f"TAU={engine.TAU}  window {score_mod.MIN_SEC:.0f}-{score_mod.MAX_SEC:.0f}s"
+          f"  accept>={score_mod.ACCEPT:.2f}")
+    print(f"{len(pairs)} matchups x {args.seeds} seeds "
           f"= {len(pairs) * args.seeds} sims\n")
 
     results = []
@@ -76,45 +88,45 @@ def main():
         results.append(m)
         if args.verbose:
             tag = f"seed {m['first_pass']}" if m["passed"] else "FAIL"
-            print(f"  {a:>12} vs {b:<12} {tag:>7}  "
+            print(f"  {a:>12} vs {b:<12} {tag:>7}  best {m['best']:.2f}  "
                   f"pass {m['pass_rate']*100:3.0f}%  "
-                  f"min {m['min_secs']:5.1f}s  med {m['med_secs']:5.1f}s  "
-                  f"winHP {m['med_frac']*100:3.0f}%  blowouts {m['blowouts']}")
+                  f"med {m['med_secs']:5.1f}s  "
+                  f"winHP {m['med_frac']*100:3.0f}%  |  {common_failures(m)}")
 
     failed = [m for m in results if not m["passed"]]
     all_rows = [r for m in results for r in m["rows"]]
-    total_blowouts = sum(m["blowouts"] for m in results)
+    passing = [r for r in all_rows if r["ok"]]
 
-    print(f"\n{'-'*66}")
+    print(f"\n{'-'*70}")
     print(f"matchups passing within {args.seeds} seeds : "
           f"{len(results)-len(failed)}/{len(results)}")
     print(f"seed pass rate (all sims)              : "
-          f"{sum(1 for r in all_rows if r['ok'])}/{len(all_rows)} "
-          f"({sum(1 for r in all_rows if r['ok'])/len(all_rows)*100:.0f}%)")
-    print(f"blowout sims (winner kept >{BLOWOUT_HP_FRAC*100:.0f}% HP)     : "
-          f"{total_blowouts}/{len(all_rows)} "
-          f"({total_blowouts/len(all_rows)*100:.0f}%)")
-    print(f"blowout-heavy matchups (>1/2 of seeds) : "
-          f"{sum(1 for m in results if m['blowouts'] > args.seeds / 2)}/{len(results)}")
-    print(f"duration  min {min(r['secs'] for r in all_rows):.1f}s   "
-          f"median {statistics.median(r['secs'] for r in all_rows):.1f}s   "
-          f"max {max(r['secs'] for r in all_rows):.1f}s")
-    print(f"sims under the {FLOOR_SEC:.0f}s floor            : "
-          f"{sum(1 for r in all_rows if r['secs'] < FLOOR_SEC)}/{len(all_rows)}")
+          f"{len(passing)}/{len(all_rows)} "
+          f"({len(passing)/len(all_rows)*100:.0f}%)")
+    if passing:
+        bests = [m["best"] for m in results if m["passed"]]
+        print(f"best-fight score per matchup           : "
+              f"min {min(bests):.2f}  median {statistics.median(bests):.2f}  "
+              f"max {max(bests):.2f}")
+        print(f"duration of PASSING fights             : "
+              f"min {min(r['secs'] for r in passing):.1f}s  "
+              f"median {statistics.median(r['secs'] for r in passing):.1f}s  "
+              f"max {max(r['secs'] for r in passing):.1f}s")
+    print(f"sims under the {score_mod.MIN_SEC:.0f}s floor            : "
+          f"{sum(1 for r in all_rows if r['secs'] < score_mod.MIN_SEC)}/{len(all_rows)}")
 
     if failed:
         print(f"\nfailing matchups ({len(failed)}):")
         for m in sorted(failed, key=lambda m: -m["med_frac"]):
             print(f"  {m['a']:>12} vs {m['b']:<12} med {m['med_secs']:5.1f}s  "
-                  f"winHP {m['med_frac']*100:3.0f}%   {why_failed(m)}")
+                  f"winHP {m['med_frac']*100:3.0f}%   {common_failures(m)}")
 
-    worst = sorted(results, key=lambda m: -m["blowouts"])[:6]
-    if worst and worst[0]["blowouts"]:
-        print("\nmost lopsided matchups:")
-        for m in worst:
-            print(f"  {m['a']:>12} vs {m['b']:<12} "
-                  f"{m['blowouts']}/{args.seeds} blowouts  "
-                  f"med winHP {m['med_frac']*100:3.0f}%")
+    weak = sorted((m for m in results if m["passed"]), key=lambda m: m["best"])[:6]
+    if weak:
+        print("\nlowest ceilings (these make the worst videos even when they pass):")
+        for m in weak:
+            print(f"  {m['a']:>12} vs {m['b']:<12} best {m['best']:.2f}  "
+                  f"pass {m['pass_rate']*100:3.0f}%")
 
     return 1 if failed else 0
 

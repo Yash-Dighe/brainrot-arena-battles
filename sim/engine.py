@@ -14,6 +14,8 @@ The log it writes is the ONLY contract with the renderer:
 """
 import argparse, json, math, os, random, sys
 
+import score
+
 FPS = 60
 PHYS_HZ = 240                      # physics substeps per second
 ARENA_C = (540.0, 1010.0)          # centre, in 1080x1920 space
@@ -28,7 +30,11 @@ BOOST_DECAY_PER_SEC = 0.15         # how fast a peeled ball settles back down
 # Global escalation: damage is multiplied by exp(t / TAU). This is what makes
 # early hits register as ~5 damage against a 90k pool and late hits hit for
 # thousands. Tune TAU to move average fight length.
-TAU = 13.5
+# 13.5 put the median fight at ~98s. TikTok pays on qualified views (>=5s
+# watched) with a 1-minute floor, so length past the floor has no established
+# payout benefit while costing completion rate. 9.25 lands the median at ~71s
+# with only ~3% of fights falling under the 62s gate.
+TAU = 9.25
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -380,19 +386,38 @@ def run_fight(roster, a_id, b_id, seed):
 
 
 def quality(sim):
-    """Is this fight worth rendering? Needs to clear 60s and stay competitive."""
-    secs = sim.t
-    loser = sim.balls[1 - sim.winner]
-    win_hp_frac = sim.balls[sim.winner].hp / sim.balls[sim.winner].max_hp
-    ok = 62.0 <= secs <= 105.0 and win_hp_frac <= 0.70
-    return ok, secs, win_hp_frac
+    """Is this fight worth rendering? See sim/score.py -- this now tests the
+    SHAPE of the fight, not just its length and final margin."""
+    ev = score.evaluate(sim)
+    return ev["ok"], ev["secs"], ev.get("final_frac", 1.0)
+
+
+def find_best(roster, a_id, b_id, seeds=300, on_seed=None):
+    """Simulate many seeds, return the best-SHAPED fight rather than the first
+    acceptable one.
+
+    A sim costs ~0.07s and a render costs ~250s, so searching 300 seeds is
+    about 20 seconds of CPU to upgrade a median fight into a 99th-percentile
+    one. Taking the first pass, as we used to, left almost all of that on the
+    table.
+    """
+    best = None
+    for s in range(seeds):
+        sim = run_fight(roster, a_id, b_id, s)
+        ev = score.evaluate(sim)
+        if on_seed:
+            on_seed(s, ev)
+        if ev["ok"] and (best is None or ev["score"] > best[1]["score"]):
+            best = (sim, ev)
+    return best
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--a"); ap.add_argument("--b")
     ap.add_argument("--seed", type=int)
-    ap.add_argument("--find", type=int, default=0, help="try N seeds, keep the best fight")
+    ap.add_argument("--find", type=int, default=0,
+                    help="simulate N seeds and keep the best-shaped fight")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -405,18 +430,23 @@ def main():
         sys.exit(f"unknown character; options: {', '.join(ids)}")
 
     if args.find:
-        best = None
-        for s in range(args.find):
-            sim = run_fight(roster, a_id, b_id, s)
-            ok, secs, frac = quality(sim)
-            if ok:
-                best = sim
-                print(f"seed {s}: {secs:.1f}s, winner kept {frac*100:.0f}% HP  <-- keeping")
-                break
-            print(f"seed {s}: {secs:.1f}s, winner kept {frac*100:.0f}% HP")
-        if best is None:
-            sys.exit("no good fight found; widen the search or retune TAU")
-        sim = best
+        seen = [0]
+
+        def tick(s, ev):
+            seen[0] += ev["ok"]
+            if s % 50 == 0 and s:
+                print(f"  {s} seeds, {seen[0]} playable", flush=True)
+
+        found = find_best(roster, a_id, b_id, args.find, tick)
+        if found is None:
+            sys.exit(f"no playable fight in {args.find} seeds; "
+                     f"widen the search or retune characters.json")
+        sim, ev = found
+        m = ev["metrics"]
+        print(f"best of {args.find} seeds: seed {sim.seed}  score {ev['score']:.2f}"
+              f"  ({seen[0]} playable)")
+        print(f"  {ev['secs']:.1f}s, winner kept {ev['final_frac']*100:.0f}% HP, "
+              f"lead changes {m['changes']}, biggest swing {m['lurch']:.2f}")
     else:
         sim = run_fight(roster, a_id, b_id, args.seed if args.seed is not None else 0)
 

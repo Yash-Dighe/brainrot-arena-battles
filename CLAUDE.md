@@ -164,6 +164,14 @@ Two engine invariants came out of that work and are worth knowing before tuning:
   covers Brr Brr's branches. They were shared, which let 11 static branches
   monopolise the cooldown and starve the opponent of their own hits (135 hits
   to 22). If another non-collision hazard is added, give it its own cooldown.
+- **Two time-scalers make an unwatchable fight.** Tralalero, Tung Tung and
+  Ballerina all ramp purely on elapsed time, so when two of them meet they
+  escalate in lockstep: the win probability sits pinned near even with no
+  swings, which scores 0.26-0.34 against a 0.60 bar. All three of those
+  pairings fail `sim/score.py` even at 300 seeds, and they are the ONLY three
+  that do. Avoid them in matchmaking, or give one fighter a bursty,
+  discrete element. Do not relax the gate to admit them -- a flat coin-flip
+  is as boring as a blowout, just for the opposite reason.
 - **`boost` decays at `BOOST_DECAY_PER_SEC` (0.15/sec)**, so a stack has to be
   large enough to outlive that or it is a no-op. Chimpanzini's peels originally
   applied a 0.04 *slow* that evaporated in 0.27s -- his ability did effectively
