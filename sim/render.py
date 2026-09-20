@@ -98,6 +98,14 @@ BLOOM_T = 150        # luma floor that counts as "bright"
 BLOOM_MIX = 0.55     # how much of the blurred bright-pass to add back
 BLOOM_DIV = 4        # downsample factor for the blur
 
+# Draft mode. Profiled at 52.5ms/frame: bloom alone is 24.5ms of that, and
+# piping 1080x1920 rgb24 is 6.2MB per frame. Draft drops the polish passes and
+# halves the output, which is ~5x faster -- for checking composition, timing
+# and whether a fight is worth keeping. NEVER ship a draft: no bloom, no glow,
+# no trails, bilinear resampling and a throwaway encode.
+DRAFT = False
+DRAFT_STEP = 2       # draft renders every Nth frame and plays at 60/N fps
+
 
 # --------------------------------------------------------------------- utils
 def clamp(v, lo, hi):
@@ -395,12 +403,13 @@ class BallArt:
         s = self.flash if flash else self.sprite
         if abs(k) < 0.015:      # k is signed now: negative == stretch
             return s
+        rs = Image.BILINEAR if DRAFT else Image.BICUBIC
         deg = math.degrees(ang)
-        s = s.rotate(-deg, Image.BICUBIC, expand=True)
+        s = s.rotate(-deg, rs, expand=True)
         w = max(4, int(s.width * (1 + k)))
         h = max(4, int(s.height * (1 - k * 0.85)))
-        s = s.resize((w, h), Image.BICUBIC)
-        return s.rotate(deg, Image.BICUBIC, expand=True)
+        s = s.resize((w, h), rs)
+        return s.rotate(deg, rs, expand=True)
 
 
 # ------------------------------------------------------- event -> effect prep
@@ -1087,8 +1096,10 @@ class Renderer:
             x, y = b["x"] + sx, b["y"] + sy
             if b["hp"] <= 0 and fi > 0:
                 continue
-            self.draw_trail(im, i, fi, sx, sy)
-            paste(im, glow(self.colors[i], int(self.ball_r * 3.6), 230), x, y, 0.95)
+            if not DRAFT:
+                self.draw_trail(im, i, fi, sx, sy)
+                paste(im, glow(self.colors[i], int(self.ball_r * 3.6), 230),
+                      x, y, 0.95)
             self.draw_signature(im, fi, i, x, y, frame)
             kk, ang = squash.get(i, (0.0, 0.0))
             # Deliberately NOT passing spin: tungtung is the only ball that
@@ -1113,7 +1124,7 @@ class Renderer:
             self.draw_title(im, title_p)
         if outro_p is not None:
             self.draw_winner(im, outro_p)
-        return self.bloom(im)
+        return im if DRAFT else self.bloom(im)
 
     def bloom(self, im):
         """Bright-pass bloom: isolate what is already bright, blur it small,
@@ -1141,8 +1152,22 @@ def find_ffmpeg(explicit=None):
              "pass --ffmpeg <path>, or `pip install imageio-ffmpeg`.")
 
 
+def shrink(im):
+    """Draft frames go down the pipe at half size."""
+    return im.resize((W // 2, H // 2), Image.BILINEAR) if DRAFT else im
+
+
 def open_encoder(ffmpeg, out_path, fps):
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    if DRAFT:
+        # Half size: a quarter of the pixels to encode, and a quarter of the
+        # 6.2MB/frame going down the pipe.
+        return subprocess.Popen(
+            [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W // 2}x{H // 2}",
+             "-r", str(fps // DRAFT_STEP), "-i", "-", "-an",
+             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+             "-pix_fmt", "yuv420p", out_path], stdin=subprocess.PIPE)
     cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
            "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
            "-r", str(fps), "-i", "-", "-an",
@@ -1176,11 +1201,19 @@ def main():
     ap.add_argument("--no-outro", action="store_true", help="skip the winner card")
     ap.add_argument("--no-cold-open", action="store_true",
                     help="skip the flash-forward to the biggest hit")
+    ap.add_argument("--draft", action="store_true",
+                    help="fast low-detail render for checking a fight; "
+                         "half size, no bloom/glow/trails. Not for posting.")
     ap.add_argument("--ffmpeg", default=None, help="path to the ffmpeg binary")
     args = ap.parse_args()
 
+    global DRAFT
+    DRAFT = args.draft
+
     log = json.load(open(args.log))
     r = Renderer(log)
+    if DRAFT:
+        print("  DRAFT: half size, no bloom/glow/trails -- do not post this")
     total = len(r.frames)
 
     # single-frame dump: the fast iteration path, no ffmpeg needed
@@ -1215,20 +1248,21 @@ def main():
     proc = open_encoder(ffmpeg, out, FPS)
     t0 = time.time()
     try:
-        total_out = len(cold) + n + outro
-        for k, fi in enumerate(cold):
-            proc.stdin.write(r.frame_image(fi).tobytes())
-        for fi in range(n):
+        step = DRAFT_STEP if DRAFT else 1
+        total_out = (len(cold) + n + outro) // step
+        for fi in cold[::step]:
+            proc.stdin.write(shrink(r.frame_image(fi)).tobytes())
+        for fi in range(0, n, step):
             tp = (fi / title_n) if (title_n and fi < title_n) else None
-            proc.stdin.write(r.frame_image(fi, title_p=tp).tobytes())
-            done = len(cold) + fi
+            proc.stdin.write(shrink(r.frame_image(fi, title_p=tp)).tobytes())
+            done = (len(cold) + fi) // step
             if done % 120 == 0 and done:
                 el = time.time() - t0
                 print(f"  {done}/{total_out}  {el:.0f}s elapsed  "
                       f"eta {el / done * (total_out - done):.0f}s", flush=True)
-        for k in range(outro):
-            proc.stdin.write(r.frame_image(n - 1, outro_p=k / max(1, outro - 1))
-                             .tobytes())
+        for k in range(0, outro, step):
+            proc.stdin.write(shrink(r.frame_image(
+                n - 1, outro_p=k / max(1, outro - 1))).tobytes())
         proc.stdin.close()
     except BrokenPipeError:
         sys.exit("ffmpeg died mid-render; run it without -loglevel error to see why")

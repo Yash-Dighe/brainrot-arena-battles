@@ -3,6 +3,7 @@ One command, one finished video: sim -> score -> render -> SFX -> mux.
 
     python tools/make_video.py --a tralalero --b boneca
     python tools/make_video.py                      # random legal matchup
+    python tools/make_video.py --draft              # fast check, not for posting
     python tools/make_video.py --seeds 500 --keep   # wider search, keep parts
 
 Every stage already works standalone; this just wires them together and fails
@@ -40,6 +41,9 @@ def main():
     ap.add_argument("--seeds", type=int, default=300)
     ap.add_argument("--keep", action="store_true",
                     help="keep the silent mp4 and the bare wav")
+    ap.add_argument("--draft", action="store_true",
+                    help="fast low-detail render for checking a fight; "
+                         "roughly 4x quicker. Not for posting.")
     args = ap.parse_args()
 
     roster = engine.load_roster()
@@ -73,7 +77,10 @@ def main():
     with open(log, "w") as fh:
         json.dump(sim.to_log(), fh)
 
-    run([PY, os.path.join(ROOT, "sim", "render.py"), log])
+    render_cmd = [PY, os.path.join(ROOT, "sim", "render.py"), log]
+    if args.draft:
+        render_cmd.append("--draft")
+    run(render_cmd)
     run([PY, os.path.join(ROOT, "sim", "audio.py"), log, "--mux"])
 
     base = os.path.splitext(log)[0]
@@ -84,8 +91,16 @@ def main():
                 os.remove(junk)
             except OSError:
                 pass
+    if args.draft:
+        # Rename so a draft can never be posted by accident -- it is the same
+        # filename as a production render otherwise, and looks plausible.
+        drafted = base + "_DRAFT_av.mp4"
+        os.replace(final, drafted)
+        final = drafted
+
     mb = os.path.getsize(final) / 1048576
-    print(f"\n  {final}  ({mb:.1f} MB, {time.time() - t0:.0f}s total)")
+    tag = "  [DRAFT -- do not post]" if args.draft else ""
+    print(f"\n  {final}  ({mb:.1f} MB, {time.time() - t0:.0f}s total){tag}")
 
 
 if __name__ == "__main__":

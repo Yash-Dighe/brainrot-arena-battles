@@ -26,6 +26,11 @@ Runs the whole pipeline and writes `out/<fight>_av.mp4`. Takes about five
 minutes, nearly all of it rendering. The stages below all work standalone if
 you want to iterate on one of them.
 
+Add `--draft` while iterating -- about four times quicker (half size, 30fps,
+no bloom/glow/trails), but it keeps the full duration, HUD and timing, so it
+stays a valid check for composition and for whether a fight is worth keeping.
+**Never post a draft**; the polish passes are exactly what it switches off.
+
 ## Run a fight
 
     python sim/engine.py --a tralalero --b boneca --seed 0
