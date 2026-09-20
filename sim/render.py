@@ -74,6 +74,8 @@ WALL_F = 9
 BRANCH_F = 26
 PIROU_F = 22
 OUTRO_SEC = 2.4      # winner card held after the KO
+COLD_SEC = 1.3       # flash-forward to the peak hit, before the fight starts
+TITLE_SEC = 1.5      # matchup card over live motion at the top of the fight
 
 # Platform-chrome safe areas, as the union of TikTok's and Shorts' worst case.
 # Anything persistent and load-bearing lives inside x[HUD_X0,HUD_X1],
@@ -844,8 +846,43 @@ class Renderer:
                font=font(52), anchor="mm", fill=DIM + (a,),
                stroke_width=6, stroke_fill=(8, 8, 16, a))
 
+    def peak_frame(self):
+        """Frame index of the biggest NON-FINISHING hit -- the cold open's hook.
+
+        Damage ramps exponentially, so the single biggest hit is essentially
+        always the KO. Opening on that would spoil the winner and make the
+        cold open a duplicate of the outro, so the last stretch is excluded:
+        we want a huge number with the result still in doubt.
+        """
+        cutoff = len(self.frames) * 0.88
+        best, bi = -1, len(self.frames) // 2
+        for e in self.log["events"]:
+            f = int(round(e["t"] * FPS))
+            if e.get("dmg", 0) > best and f < cutoff:
+                best, bi = e["dmg"], f
+        return int(clamp(bi, 0, len(self.frames) - 1))
+
+    def draw_title(self, im, p):
+        """NAME vs NAME over live motion. Never a static card -- a frozen
+        opening is the worst-retaining kind, and the first 5 seconds are the
+        qualified-view threshold, i.e. the paywall."""
+        d = ImageDraw.Draw(im, "RGBA")
+        a = int(255 * clamp(min(p * 5.0, (1 - p) * 5.0), 0, 1))
+        if a <= 2:
+            return
+        cy = self.arena["cy"]
+        d.rectangle([0, cy - 290, W, cy + 290], fill=(6, 6, 14, int(a * 0.66)))
+        for i, f in enumerate(self.fighters):
+            name = f["name"].upper()
+            d.text((W / 2, cy - 185 + i * 370), name,
+                   font=fit_font(name, W - 140, 96, 44), anchor="mm",
+                   fill=self.colors[i] + (a,), stroke_width=9,
+                   stroke_fill=(8, 8, 16, a))
+        d.text((W / 2, cy + 10), "VS", font=font(72), anchor="mm",
+               fill=INK + (a,), stroke_width=7, stroke_fill=(8, 8, 16, a))
+
     # -- one frame -----------------------------------------------------------
-    def frame_image(self, fi, outro_p=None):
+    def frame_image(self, fi, outro_p=None, title_p=None):
         frame = self.frames[min(fi, len(self.frames) - 1)]
         im = self.bg.copy()
 
@@ -915,6 +952,8 @@ class Renderer:
                 [0, 0, W, H], fill=(60, 130, 255, 46))
 
         self.draw_hud(im, frame, fi)
+        if title_p is not None:
+            self.draw_title(im, title_p)
         if outro_p is not None:
             self.draw_winner(im, outro_p)
         return im
@@ -969,6 +1008,8 @@ def main():
     ap.add_argument("--at", type=float, default=None,
                     help="like --frame but in seconds")
     ap.add_argument("--no-outro", action="store_true", help="skip the winner card")
+    ap.add_argument("--no-cold-open", action="store_true",
+                    help="skip the flash-forward to the biggest hit")
     ap.add_argument("--ffmpeg", default=None, help="path to the ffmpeg binary")
     args = ap.parse_args()
 
@@ -992,17 +1033,33 @@ def main():
     n = min(total, int(args.preview * FPS)) if args.preview else total
     outro = 0 if (args.no_outro or args.preview) else int(OUTRO_SEC * FPS)
 
+    # Cold open: our payoff is structurally at the end and our opening is
+    # structurally the weakest moment in the video, so lead with the peak hit
+    # and then cut back to t=0.
+    cold = []
+    if not (args.no_cold_open or args.preview):
+        pk = r.peak_frame()
+        half = int(COLD_SEC * FPS)
+        cold = list(range(max(0, pk - half // 3), min(total, pk + 2 * half // 3)))
+    title_n = 0 if args.preview else int(TITLE_SEC * FPS)
+
     print(f"{r.fighters[0]['name']} vs {r.fighters[1]['name']}  "
-          f"({log['meta']['fight_seconds']:.1f}s, {n + outro} frames)")
+          f"({log['meta']['fight_seconds']:.1f}s, "
+          f"{len(cold) + n + outro} frames)")
     proc = open_encoder(ffmpeg, out, FPS)
     t0 = time.time()
     try:
-        for fi in range(n):
+        total_out = len(cold) + n + outro
+        for k, fi in enumerate(cold):
             proc.stdin.write(r.frame_image(fi).tobytes())
-            if fi % 120 == 0 and fi:
+        for fi in range(n):
+            tp = (fi / title_n) if (title_n and fi < title_n) else None
+            proc.stdin.write(r.frame_image(fi, title_p=tp).tobytes())
+            done = len(cold) + fi
+            if done % 120 == 0 and done:
                 el = time.time() - t0
-                print(f"  {fi}/{n + outro}  {el:.0f}s elapsed  "
-                      f"eta {el / fi * (n + outro - fi):.0f}s", flush=True)
+                print(f"  {done}/{total_out}  {el:.0f}s elapsed  "
+                      f"eta {el / done * (total_out - done):.0f}s", flush=True)
         for k in range(outro):
             proc.stdin.write(r.frame_image(n - 1, outro_p=k / max(1, outro - 1))
                              .tobytes())
@@ -1011,7 +1068,7 @@ def main():
         sys.exit("ffmpeg died mid-render; run it without -loglevel error to see why")
     proc.wait()
     el = time.time() - t0
-    secs = (n + outro) / FPS
+    secs = (len(cold) + n + outro) / FPS
     print(f"  wrote {out}")
     print(f"  {el:.1f}s render for {secs:.1f}s of video "
           f"({el / secs:.2f}s per video-second, {(n + outro) / el:.1f} fps)")

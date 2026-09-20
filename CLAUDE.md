@@ -69,11 +69,21 @@ visuals can be reworked without changing how fights play out.
 ## Where things stand (updated 2026-09-18)
 
 **Steps 1-3 are built and verified. Steps 4-6 are not started.**
+**Tier 1 and Tier 2 of `docs/design-plan.md` are done** (commits from
+2026-09-18/20): HUD safe areas, percentage + chip HP bars, palette separation,
+the Tung Tung spin fix, shape-aware fight scoring, best-of-300 seed search,
+TAU 9.25, and the cold open. Tier 3 (additive bloom, hit-stop, impact star,
+trail polyline, elastic squash, alpha audit) is the next render work.
 
 - **Balance is done.** All 36 matchups pass `quality()` within 12 seeds (worst
   case seed 5). Blowouts 11%, min duration 78.5s, median 97.9s, no timeouts.
   Gate: `python sim/sweep.py` -- run it after any `characters.json` edit.
-- **Renderer works end to end.** ~1.7s of render per second of video, so a
+- **Fight selection searches 300 seeds** and renders the best-SHAPED one
+  (`engine.find_best` + `sim/score.py`), rather than the first acceptable
+  fight. ~20s of CPU; it was the cheapest large quality win available.
+- **Videos now open on a cold open** -- a flash-forward to the biggest
+  non-finishing hit -- then a matchup card over live motion, then t=0.
+- **Renderer works end to end.** ~2s of render per second of video, so a
   fight is ~2.5 min, single-threaded. `--at <seconds>` dumps one PNG in under a
   second and is the way to iterate on the look; `--preview N` for a short clip.
 - **Repo**: `github.com/Yash-Dighe/brainrot-arena-battles`, **private**.
