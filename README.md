@@ -53,6 +53,15 @@ acceptance test: if you can't name a character from its black shape, it will
 not read at the ~121px it actually renders at. Missing files fall back to a
 coloured sphere with the character's initials.
 
+## Add sound
+
+    python sim/audio.py out/fight.json           # -> out/fight.wav
+    python sim/audio.py out/fight.json --mux     # + out/fight_av.mp4
+
+All SFX are synthesized from the standard library -- no samples, no loops.
+Reads `out/fight_timeline.json` (written by the renderer) so events line up
+with video time despite the cold open.
+
 ## Check balance
 
     python sim/sweep.py                   # all 36 matchups x 12 seeds

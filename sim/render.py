@@ -1155,6 +1155,21 @@ def main():
     except BrokenPipeError:
         sys.exit("ffmpeg died mid-render; run it without -loglevel error to see why")
     proc.wait()
+
+    # Timeline sidecar: the cold open means video time no longer equals sim
+    # time, so SFX and captions downstream cannot key off the event log alone.
+    # This is the contract between the renderer and steps 4-6.
+    tl = {
+        "video": os.path.basename(out), "fps": FPS,
+        "cold_frames": [cold[0], cold[-1]] if cold else None,
+        "cold_sec": len(cold) / FPS,
+        "fight_offset_sec": len(cold) / FPS,   # add this to every event t
+        "fight_frames": n, "outro_frames": outro,
+        "total_sec": (len(cold) + n + outro) / FPS,
+    }
+    with open(os.path.splitext(out)[0] + "_timeline.json", "w") as fh:
+        json.dump(tl, fh, indent=2)
+
     el = time.time() - t0
     secs = (len(cold) + n + outro) / FPS
     print(f"  wrote {out}")

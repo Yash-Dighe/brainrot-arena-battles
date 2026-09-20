@@ -120,10 +120,13 @@ Decisions taken 2026-09-18:
 2. **Character art** -- DONE. `tools/make_art.py` draws all nine in code
    (flat vector, one shared ink outline, consistent by construction). Run
    `--check` and read the silhouette sheet before accepting any redraw.
-3. **Step 4, audio/SFX** -- build it as a *tonal* system (hits on ascending
-   scale steps that resolve), not just pitch-shifted thumps. Original motif
-   only. Music ships ON by default in v1, since there is no narrator to compete
-   with yet.
+3. **Step 4, audio/SFX** -- DONE. `sim/audio.py` synthesizes everything from
+   the stdlib (no samples, no loops, so royalty-free is unarguable). Hits walk
+   a minor-pentatonic scale and resolve on the KO; a sub drone swells across
+   the round. Muxing applies `loudnorm` to about -14 LUFS, because the raw
+   synth master sits near -32 and platforms would gain it up themselves.
+   **Nobody has listened to it yet** -- it is verified only structurally
+   (alignment, peak, LUFS). Needs a human ear before it ships.
 4. **Step 5, narration** -- event log to an LLM for the script, TTS for voice
    and word timings, captions burned in.
 5. **Step 6, assembly and manual posting.**
