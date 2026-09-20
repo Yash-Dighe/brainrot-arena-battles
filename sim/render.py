@@ -359,7 +359,9 @@ class BallArt:
         if not os.path.exists(p):
             return None
         im = Image.open(p).convert("RGBA")
-        inner = int(n * 0.78)
+        # 0.86, not 0.78: at 121px display every wasted pixel of padding is
+        # wasted legibility. The ball mask clips the corners anyway.
+        inner = int(n * 0.86)
         im = im.resize((inner, inner), Image.LANCZOS)
         out = Image.new("RGBA", (n, n), (0, 0, 0, 0))
         out.paste(im, ((n - inner) // 2, (n - inner) // 2), im)

@@ -117,8 +117,9 @@ Decisions taken 2026-09-18:
    chrome; the HP bar conveys nothing for the first ~40s; four colour pairs are
    indistinguishable; Tung Tung's sprite rotation would destroy any art we give
    him. All display-side, no balance risk.
-2. **Character art** -- drawn in code per the spec in `docs/design-plan.md`.
-   Note art displays at 121px, not 156px, and square corners are clipped.
+2. **Character art** -- DONE. `tools/make_art.py` draws all nine in code
+   (flat vector, one shared ink outline, consistent by construction). Run
+   `--check` and read the silhouette sheet before accepting any redraw.
 3. **Step 4, audio/SFX** -- build it as a *tonal* system (hits on ascending
    scale steps that resolve), not just pitch-shifted thumps. Original motif
    only. Music ships ON by default in v1, since there is no narrator to compete

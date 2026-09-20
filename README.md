@@ -41,8 +41,17 @@ Character ids: `tralalero`, `bombardiro`, `tungtung`, `ballerina`, `boneca`,
 fight takes a few minutes. Use `--at` while tuning the look -- it renders a
 single frame in under a second.
 
-Drop character art at `assets/balls/<id>.png` (transparent square). Missing
-art falls back to a coloured sphere with the character's initials.
+Character art lives at `assets/balls/<id>.png` and is generated, not hand-
+drawn:
+
+    python tools/make_art.py            # rebuild all nine
+    python tools/make_art.py --check    # + contact and silhouette sheets
+
+Editing `tools/make_art.py` re-cuts the whole set consistently -- change
+`INK_W` or the palette once and all nine update. The silhouette sheet is the
+acceptance test: if you can't name a character from its black shape, it will
+not read at the ~121px it actually renders at. Missing files fall back to a
+coloured sphere with the character's initials.
 
 ## Check balance
 
