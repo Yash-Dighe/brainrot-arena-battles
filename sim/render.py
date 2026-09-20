@@ -62,8 +62,8 @@ DIM = (150, 158, 190)
 
 # ---------------------------------------------------------- effect durations
 # All in frames at 60fps. These are look knobs, tune freely.
-FLASH_F = 5          # white flash on the ball that got hit
-SQUASH_F = 11        # squash-and-stretch deform
+FLASH_F = 6          # white flash: 2 frames solid, then fade
+SQUASH_F = 15        # squash-and-stretch deform (damped elastic)
 DMG_F = 44           # damage number pop + float + fade
 SHAKE_F = 13         # screen shake decay
 BOOM_F = 30          # explosion shockwave ring
@@ -86,6 +86,16 @@ DEAD_TOP = 210       # status bar / notch / For-You tabs
 DEAD_BOT = 1500      # username + caption + sound ticker + CTA
 HUD_X0, HUD_X1 = 60, 960   # 960 keeps clear of the right action rail
 CAP_BAND = (1180, 1420)    # reserved for burned-in captions in step 5
+
+# Bloom. paste() is source-over, so a glow sprite behind a ball DULLS what it
+# overlaps instead of adding to it -- which is why everything read flat despite
+# glows being everywhere. Rather than restructure every paste call into an
+# additive layer, we bright-pass the composed frame and add a blurred copy
+# back. Same neon result, far less to go wrong. Blur at 1/4 scale: blurring at
+# 1080x1920 would cost more than the whole rest of the frame.
+BLOOM_T = 150        # luma floor that counts as "bright"
+BLOOM_MIX = 0.55     # how much of the blurred bright-pass to add back
+BLOOM_DIV = 4        # downsample factor for the blur
 
 
 # --------------------------------------------------------------------- utils
@@ -239,6 +249,36 @@ def glow(color, size, strength=150):
     return s
 
 
+def star_sprite(color, size):
+    """Four-point starburst: two crossed tapered spikes with a white core.
+
+    One cached sprite scaled per frame. This is what makes a hit read AS a hit
+    in a single frame of scrubbing, which matters when most viewers are seeing
+    the video at speed on a small screen.
+    """
+    size = max(8, int(round(size / 2)) * 2)
+    k = _key("star", color, size)
+    sp = _cache.get(k)
+    if sp is None:
+        n = size * SS
+        big = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+        d = ImageDraw.Draw(big)
+        c, long_, short = n / 2, n / 2, n * 0.085
+        for ang in (0.0, math.pi / 2):
+            pts = []
+            for j, (r, a) in enumerate(((long_, 0), (short, math.pi / 4),
+                                        (long_, math.pi / 2), (short, 3 * math.pi / 4),
+                                        (long_, math.pi), (short, 5 * math.pi / 4),
+                                        (long_, 3 * math.pi / 2), (short, 7 * math.pi / 4))):
+                pts.append((c + math.cos(a + ang) * r, c + math.sin(a + ang) * r))
+            d.polygon(pts, fill=color + (255,))
+        d.ellipse([c - n * 0.09, c - n * 0.09, c + n * 0.09, c + n * 0.09],
+                  fill=(255, 255, 255, 255))
+        sp = big.resize((size, size), Image.LANCZOS)
+        _cache[k] = sp
+    return sp
+
+
 def arc_sprite(color, size, width, sweep):
     """Open arc used for Tung Tung's bat blur and Ballerina's rings."""
     size = max(8, int(round(size / 4)) * 4)
@@ -350,7 +390,7 @@ class BallArt:
         makes the ball read as solid.
         """
         s = self.flash if flash else self.sprite
-        if k < 0.015:
+        if abs(k) < 0.015:      # k is signed now: negative == stretch
             return s
         deg = math.degrees(ang)
         s = s.rotate(-deg, Image.BICUBIC, expand=True)
@@ -576,14 +616,26 @@ class Renderer:
         boost = self.frames[fi]["balls"][i].get("boost", 0.0)
         if boost > 0.01:
             n = max(n, int(10 + boost * 24))
+        # A tapered polyline, not a string of discs. The old tail ran at
+        # alpha 0.035 -- about +5 code values over the arena floor, inside the
+        # quantization dead zone, so it encoded to literally nothing at
+        # delivery bitrate. Discrete discs also strobe: they blob together at
+        # low speed and separate into dots at high speed.
+        n = min(n, 14)
+        d = ImageDraw.Draw(im, "RGBA")
+        pts = []
         for k in range(n, 0, -1):
             j = fi - k
-            if j < 0:
-                continue
-            b = self.frames[j]["balls"][i]
-            t = 1.0 - k / n
-            paste(im, disc(col, int(self.ball_r * 2 * (0.25 + 0.62 * t))),
-                  b["x"] + sx, b["y"] + sy, 0.035 + 0.075 * t)
+            if j >= 0:
+                b = self.frames[j]["balls"][i]
+                pts.append((b["x"] + sx, b["y"] + sy, 1.0 - k / n))
+        for a, b in zip(pts, pts[1:]):
+            t = b[2]
+            w = self.ball_r * (0.15 + 0.75 * t)
+            al = int(255 * (0.05 + 0.29 * t))
+            c = mix(col, (255, 255, 255), 0.25 * t)
+            d.line([a[0], a[1], b[0], b[1]], fill=c + (al,),
+                   width=max(2, int(w)))
 
     def draw_proj(self, im, frame, sx, sy):
         d = ImageDraw.Draw(im, "RGBA")
@@ -718,6 +770,21 @@ class Renderer:
                        f"COMBO x{fx['n']}", font=font(int(54 * sc)), anchor="mm",
                        fill=(255, 245, 230, int(255 * (1 - p ** 2))),
                        stroke_width=8, stroke_fill=(40, 20, 10, int(255 * (1 - p ** 2))))
+
+        # impact star: sits under the numbers, scales in over 2 frames and
+        # is gone in 6. Cheap, and it is the thing that makes a hit legible
+        # as a hit when someone is scrubbing or half-watching.
+        for fx in fx_list:
+            if fx["k"] != "hit" or fx["rel"] < 0.30:
+                continue
+            age = fi - fx["f0"]
+            if age > 6:
+                continue
+            grow = clamp(age / 2.0, 0.0, 1.0)
+            fade = clamp(1.0 - (age - 2) / 4.0, 0.0, 1.0)
+            sz = int((280 + fx["rel"] * 220) * (0.35 + 0.65 * ease_out(grow)))
+            paste(im, star_sprite(mix(self.colors[fx["by"]], (255, 255, 255), 0.55), sz),
+                  fx["x"] + sx, fx["y"] + sy, 0.9 * fade)
 
         # damage numbers last so they sit on top of everything in the arena
         for fx in fx_list:
@@ -917,13 +984,23 @@ class Renderer:
             if fx["k"] == "hit":
                 age = fi - fx["f0"]
                 if age < FLASH_F:
-                    flash[fx["to"]] = max(flash.get(fx["to"], 0), 1 - age / FLASH_F)
+                    # 1 solid frame, not 2: with bloom and the impact star
+                    # on top, 2 frames of full white erased the ball entirely
+                    fv = 0.92 if age < 1 else max(0.0, 1 - age / (FLASH_F - 1))
+                    flash[fx["to"]] = max(flash.get(fx["to"], 0), fv)
+                    # reciprocal flash: sells the hit as an event BETWEEN
+                    # two objects, not something done to one of them
+                    flash[fx["by"]] = max(flash.get(fx["by"], 0), fv * 0.45)
                 if age < SQUASH_F:
                     src = frame["balls"][fx["by"]]
                     dst = frame["balls"][fx["to"]]
                     ang = math.atan2(dst["y"] - src["y"], dst["x"] - src["x"])
-                    kk = 0.34 * (1 - age / SQUASH_F) * (0.5 + 0.5 * fx["rel"])
-                    if kk > squash.get(fx["to"], (0, 0))[0]:
+                    tq = age / SQUASH_F
+                    amp = 0.14 + 0.36 * fx["rel"]
+                    # damped cosine: the sign flip past ~0.3 turns the
+                    # squash into a stretch, which is what reads as elastic
+                    kk = amp * (1 - tq) ** 2 * math.cos(tq * 2 * math.pi * 1.6)
+                    if abs(kk) > abs(squash.get(fx["to"], (0, 0))[0]):
                         squash[fx["to"]] = (kk, ang)
 
         for i in range(2):
@@ -956,7 +1033,16 @@ class Renderer:
             self.draw_title(im, title_p)
         if outro_p is not None:
             self.draw_winner(im, outro_p)
-        return im
+        return self.bloom(im)
+
+    def bloom(self, im):
+        """Bright-pass bloom: isolate what is already bright, blur it small,
+        add it back. This is what separates 'neon' from 'flat'."""
+        w, h = W // BLOOM_DIV, H // BLOOM_DIV
+        bp = im.resize((w, h), Image.BILINEAR).point(
+            lambda v: int(clamp((v - BLOOM_T) * 2.2 * BLOOM_MIX, 0, 255)))
+        bp = bp.filter(ImageFilter.GaussianBlur(6))
+        return ImageChops.add(im, bp.resize((W, H), Image.BILINEAR))
 
 
 # ----------------------------------------------------------------- ffmpeg io
