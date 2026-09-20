@@ -127,9 +127,17 @@ Decisions taken 2026-09-18:
    synth master sits near -32 and platforms would gain it up themselves.
    **Nobody has listened to it yet** -- it is verified only structurally
    (alignment, peak, LUFS). Needs a human ear before it ships.
-4. **Step 5, narration** -- event log to an LLM for the script, TTS for voice
+4. **Tier 4 of `docs/design-plan.md`: the frame is still ~97% empty.** Balls
+   are 2.8% of arena area, and a circle inscribed in 1080 wastes half a 9:16
+   frame. Needs a decision: a render-side virtual camera touches every draw
+   call, while bigger balls or a non-circular arena are simpler edits but move
+   collision frequency and need a full `sweep.py` re-run. Left undone
+   deliberately -- it is the riskiest item on the list.
+5. **Step 5, narration** -- event log to an LLM for the script, TTS for voice
    and word timings, captions burned in.
-5. **Step 6, assembly and manual posting.**
+6. **Step 6, assembly.** `tools/make_video.py` already does
+   sim -> render -> SFX -> mux in one command. What remains is
+   captions (needs step 5) and posting, which stays manual.
 
 ### Known rough edges
 

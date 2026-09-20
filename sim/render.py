@@ -20,6 +20,7 @@ W, H = 1080, 1920
 FPS = 60
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ART_DIR = os.path.join(ROOT, "assets", "balls")
+ROSTER_PATH = os.path.join(ROOT, "characters.json")
 
 # ------------------------------------------------------------------- palette
 # One ball colour per character, themed to who they are. This is the only
@@ -413,6 +414,13 @@ class Effects:
     def __init__(self, log, nframes):
         self.spawn = {}
         self.shake = [0.0] * (nframes + 8)
+        # Local hit-stop: which earlier frame each ball should be drawn AT,
+        # so a struck ball hangs in place for a few frames while everything
+        # else keeps moving. Deliberately NOT implemented by repeating output
+        # frames -- with ~150 hits that would add seconds of video and push
+        # every event out of sync with its own timestamp, which would break
+        # SFX, narration and captions downstream.
+        self.hold = [[None, None] for _ in range(nframes + 8)]
         events = self._merge_hits(log["events"])
         dmgs = [e["dmg"] for e in events if "dmg" in e]
         self.dmg_hi = max(dmgs) if dmgs else 1
@@ -433,6 +441,16 @@ class Effects:
                 # No floor. A constant 4px jitter on every one of ~150 hits
                 # reads as a shaky camera, not as impact -- shake has to be
                 # absent most of the time for it to mean anything.
+                # Freeze the victim for a few frames, the attacker for
+                # fewer -- the asymmetry is straight out of the arcade
+                # beat-em-ups, and it reads as the hit landing ON someone.
+                if rel >= 0.35:
+                    nf = int(round(1 + 5 * rel * rel))
+                    for who, dur in ((e["to"], nf), (e["by"], max(1, nf - 2))):
+                        for i in range(dur):
+                            j = f + i
+                            if j < len(self.hold):
+                                self.hold[j][who] = f
                 if rel >= 0.20:
                     amp = rel * rel * 46
                     dur = 10 + int(round(rel * 8))
@@ -526,6 +544,7 @@ class Renderer:
         self.bg = self._background()
         self.shake_dirs = [(math.cos(i * 2.399), math.sin(i * 2.399)) for i in range(64)]
         self.ghost = self._ghost_series()
+        self.next_up = self._next_matchup()
 
     def _ghost_series(self):
         """Lagging HP fraction per frame, for the chip bar.
@@ -808,9 +827,21 @@ class Renderer:
             # ball 0's damage always drifts left, ball 1's right, so the two
             # numbers from a single collision never sit on top of each other
             side = -1 if fx["to"] == 0 else 1
-            yy = (fx["y"] + sy - 70 - ease_out(p) * 120
-                  - (0 if fx["to"] == 0 else 158))
-            yy = clamp(yy, 560, 1400)              # stay inside the arena band
+            # Deterministic per-hit jitter. The left/right split only
+            # separates the two numbers from ONE collision; successive hits on
+            # the SAME victim within DMG_F got the same side and the same
+            # offset and stacked into an unreadable mush.
+            # Two numbers land on every collision, and at that instant the
+            # balls are by definition touching -- so anchoring both to their
+            # own ball puts them ~150px apart, less than one line of type.
+            # The previous fixed -158 nudge for ball 1 happened to cancel that
+            # gap exactly and stacked them into mush. Force separate lanes:
+            # ball 0's number goes well above the impact, ball 1's well below.
+            jx = ((fx["f0"] * 37 + fx["to"] * 101) % 7 - 3) * 30
+            jy = ((fx["f0"] * 53 + fx["to"] * 29) % 5 - 2) * 34
+            lane = -190 if fx["to"] == 0 else 150
+            yy = fx["y"] + sy + lane - ease_out(p) * 110 + jy
+            yy = clamp(yy, 580, 1380)              # stay inside the arena band
             txt = f"-{fx['dmg']:,}"
             f = font(size)
             stroke = max(5, size // 9)
@@ -823,7 +854,8 @@ class Renderer:
                 stroke = max(5, size // 9)
             half = d.textlength(txt, font=f) / 2 + stroke + 28
             lo, hi = half, W - half
-            xx = clamp(fx["x"] + sx + side * 165, lo, hi) if lo <= hi else W / 2
+            xx = (clamp(fx["x"] + sx + side * 165 + jx, lo, hi)
+                  if lo <= hi else W / 2)
             # Hard offset shadow under a pure-black stroke: depth, and it
             # survives compression far better than a soft glow would.
             d.text((xx, yy + 5), txt, font=f, anchor="mm",
@@ -950,6 +982,48 @@ class Renderer:
         d.text((W / 2, cy + 10), "VS", font=font(72), anchor="mm",
                fill=INK + (a,), stroke_width=7, stroke_fill=(8, 8, 16, a))
 
+    def _next_matchup(self):
+        """Two roster characters who are NOT in this fight.
+
+        An open "comment the next matchup" asks the viewer to invent an
+        answer; naming two makes it a reaction instead, which is what
+        actually converts. Seeded off the fight so it is stable per video.
+        """
+        try:
+            with open(ROSTER_PATH, encoding="utf-8") as fh:
+                ids = [c["id"] for c in json.load(fh)["characters"]]
+        except Exception:
+            return None
+        pool = [i for i in ids if i not in self.ids]
+        if len(pool) < 2:
+            return None
+        k = int(self.meta.get("seed", 0))
+        a = pool[k % len(pool)]
+        b = pool[(k * 7 + 3) % len(pool)]
+        if a == b:
+            b = pool[(pool.index(a) + 1) % len(pool)]
+        return a.upper(), b.upper()
+
+    def draw_engagement(self, im, p_through):
+        """Comment prompt, from ~55% through -- NOT only at the end.
+
+        A prompt that appears after the winner is revealed is seen by nobody,
+        because the result is the exit cue. This sits in the empty band above
+        the platform caption block.
+        """
+        if p_through < 0.55 or not self.next_up:
+            return
+        d = ImageDraw.Draw(im, "RGBA")
+        a = int(230 * clamp((p_through - 0.55) * 8, 0, 1))
+        y = 1452
+        d.polygon([(W / 2 - 16, y - 54), (W / 2 + 16, y - 54), (W / 2, y - 28)],
+                  fill=(255, 255, 255, a))
+        d.text((W / 2, y), f"NEXT: {self.next_up[0]} vs {self.next_up[1]}?",
+               font=font(42), anchor="mm", fill=INK + (a,),
+               stroke_width=6, stroke_fill=(8, 8, 16, a))
+        d.text((W / 2, y + 46), "COMMENT YOUR PICK", font=font(32), anchor="mm",
+               fill=DIM + (a,), stroke_width=5, stroke_fill=(8, 8, 16, a))
+
     # -- one frame -----------------------------------------------------------
     def frame_image(self, fi, outro_p=None, title_p=None):
         frame = self.frames[min(fi, len(self.frames) - 1)]
@@ -1005,8 +1079,11 @@ class Renderer:
                     if abs(kk) > abs(squash.get(fx["to"], (0, 0))[0]):
                         squash[fx["to"]] = (kk, ang)
 
+        hold = self.fx.hold[fi] if fi < len(self.fx.hold) else (None, None)
         for i in range(2):
-            b = frame["balls"][i]
+            # hit-stop: draw this ball where it was when it got hit
+            hf = hold[i]
+            b = frame["balls"][i] if hf is None else self.frames[hf]["balls"][i]
             x, y = b["x"] + sx, b["y"] + sy
             if b["hp"] <= 0 and fi > 0:
                 continue
@@ -1031,6 +1108,7 @@ class Renderer:
                 [0, 0, W, H], fill=(60, 130, 255, 46))
 
         self.draw_hud(im, frame, fi)
+        self.draw_engagement(im, fi / max(1, len(self.frames) - 1))
         if title_p is not None:
             self.draw_title(im, title_p)
         if outro_p is not None:

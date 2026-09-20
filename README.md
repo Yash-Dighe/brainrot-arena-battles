@@ -17,6 +17,15 @@ Requires Python 3.10+ and ffmpeg.
 
 The renderer finds ffmpeg via `--ffmpeg`, then `$FFMPEG`, then your PATH.
 
+## Make a video
+
+    python tools/make_video.py --a tralalero --b boneca
+    python tools/make_video.py                    # random legal matchup
+
+Runs the whole pipeline and writes `out/<fight>_av.mp4`. Takes about five
+minutes, nearly all of it rendering. The stages below all work standalone if
+you want to iterate on one of them.
+
 ## Run a fight
 
     python sim/engine.py --a tralalero --b boneca --seed 0
