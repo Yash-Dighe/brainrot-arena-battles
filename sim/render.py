@@ -968,8 +968,9 @@ class Renderer:
         best, bi = -1, len(self.frames) // 2
         for e in self.log["events"]:
             f = int(round(e["t"] * FPS))
-            if e.get("dmg", 0) > best and f < cutoff:
-                best, bi = e["dmg"], f
+            dmg = e.get("dmg")
+            if dmg is not None and dmg > best and f < cutoff:
+                best, bi = dmg, f
         return int(clamp(bi, 0, len(self.frames) - 1))
 
     def draw_title(self, im, p):
