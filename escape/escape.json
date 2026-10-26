@@ -1,28 +1,41 @@
 {
-  "notes": "All tuning for the ring-escape format lives here, never in code. Distances are px in the 1080x1920 frame, angles in degrees, time in seconds. Re-run `python escape/engine.py --survey` after editing to see how durations move.",
+  "notes": "All tuning for the ring-escape format lives here, never in code. Distances are px in the 1080x1920 frame, angles in degrees, time in seconds. Re-run `python escape/engine.py --survey 100` after editing to see how durations and per-ring timings move.",
 
   "rings": {
-    "count": 12,
+    "notes": "Per-ring lists, inner ring first; their length is the ring count. The difficulty curve is physical: wide fast gaps break at once, narrow slow ones hold. Negative spin turns the other way. spiral_deg offsets each ring's gap from the one inside it, which paces the hook (near 0 the gaps line up and the ball flies through several at once).",
+    "gap_deg":          [110, 105, 100, 95, 90, 85,   58, 55, 52, 50,   10, 8],
+    "spin_deg_per_sec": [120, 120, 120, 120, 120, 120, -39, -37, -35, -33, -15, 12],
     "inner_radius": 130,
     "spacing": 34,
     "width": 8,
-    "gap_deg": 40,
-    "spin_deg_per_sec": 60,
-    "spin_step": 0.06,
     "alternate": false,
-    "spiral_deg": 22
+    "spiral_deg": 150
   },
 
   "ball": {
     "radius": 15,
-    "launch_speed": 520,
-    "max_speed": 2400
+    "launch_speed": 950,
+    "max_speed": 4000
   },
 
   "physics": {
-    "gravity": 1500,
+    "gravity": 5000,
     "restitution": 1.0,
-    "substeps": 8
+    "substeps": 8,
+    "near_miss_deg": 6
+  },
+
+  "shape": {
+    "notes": "What engine.score() rewards. Rings [0, hook_rings) are the hook, the last boss_rings are the boss, the rest are the middle.",
+    "hook_rings": 6,
+    "hook_seconds": 10,
+    "middle_seconds": [4, 8],
+    "growth_slack": 0.25,
+    "boss_rings": 2,
+    "boss_min_seconds": 18,
+    "boss_near_misses": 10,
+    "stall_max_seconds": 10,
+    "usable_score": 0.6
   },
 
   "video": {

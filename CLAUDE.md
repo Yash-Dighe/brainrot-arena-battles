@@ -13,8 +13,31 @@ only draws -> synthesized audio), same 60s+ and royalty-free constraints.
   `make.py` does search -> render -> audio -> mux in one command.
 - Kept deliberately plain. Variants (growing ball, endless rings, racing
   balls) come after the plain version looks right.
-- Survey at 2026-10-26: 20/20 escape, but only 6/20 usable; median 63s,
-  min 44s. Durations are the tuning problem to look at first.
+
+**Progress-bar shape (2026-10-26).** Each run is tuned to: a hook that breaks
+6 of 12 rings inside ~10s, middle rings that hold 4-8s each and get slower,
+then the last 2 rings as a long "boss" stall with near-misses, then a 3s end.
+- Difficulty is per ring in `escape.json` (`gap_deg`, `spin_deg_per_sec`
+  lists, inner first). Physics stays real; nothing is scripted. Gravity is
+  5000 (was 1500) because more bounces per second made ring times far less
+  random. `spiral_deg` 150 paces the hook (near 0, gaps line up and the ball
+  flies through several rings at once).
+- `near_miss` events: a bounce within `near_miss_deg` (6) of the gap edge,
+  or a ball that enters the gap and falls back (`kind: lip`).
+- `score()` is shape-based (`shape_terms()`; targets in `escape.json` under
+  `shape`). Hook, middle, growth and boss terms combine as a geometric mean;
+  an early stall multiplies the result. Runs outside 62-90s get None.
+- Renderer: `k/12` counter plus a segmented progress bar; near-misses flash
+  the ring white and throw a spark. Audio: a rising detuned whistle.
+- Survey (seeds 0-99): 25/100 usable (score >= 0.6), 37/100 in the 62-90s
+  window, 4 timeouts, median 73.6s. Hook and middle hit their targets;
+  **the boss is the limit.** Its time is close to memoryless (p90 ~3x
+  median), so half the runs land too short or too long.
+- **Near-misses are capped by geometry.** Near-misses per escape attempt
+  ~= edge-zone width / passable gap width, and the outer ring only gets ~2
+  bounces/s. A boss with 10+ near-misses needs a gap so narrow that stalls
+  run to ~100s. The median boss gets 3; seed search finds runs with 7-8.
+  Raising this needs more bounces per second, not a narrower gap.
 
 **Everything below describes the brainrot battles, which are parked, not
 abandoned.** Their code (`sim/`, `tools/`, `characters.json`) stays untouched

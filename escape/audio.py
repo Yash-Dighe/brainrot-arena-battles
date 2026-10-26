@@ -22,6 +22,7 @@ MELODY = [
     0, 4, 7, 12, 14, 12, 11, 7,   9, 7, 5, 4, 2, 7, -1, 0,
 ]
 FINAL_CHORD = [0, 4, 7, 12, 16, 19, 24]
+NEAR_MERGE = 10 / 60      # near-misses closer than this share one sound (matches render)
 
 
 def hz(semi):
@@ -81,6 +82,22 @@ def shimmer(dur=0.5):
     return out
 
 
+def zip_up(dur=0.22, f0=900.0, f1=2600.0):
+    """A fast rising whistle for a near-miss: tension, not reward. Two
+    detuned sweeps a semitone apart so it grates a little."""
+    n = int(dur * SR)
+    out = [0.0] * n
+    ph1 = ph2 = 0.0
+    for i in range(n):
+        p = i / n
+        f = f0 * (f1 / f0) ** p
+        ph1 += 2 * math.pi * f / SR
+        ph2 += 2 * math.pi * f * 1.0595 / SR
+        e = min(1.0, i / 80) * (1 - p) ** 2
+        out[i] = (math.sin(ph1) + 0.6 * math.sin(ph2)) * e
+    return out
+
+
 def build(log):
     m = log["meta"]
     tr = Track(m["video_seconds"])
@@ -94,6 +111,7 @@ def build(log):
 
     nring = len(m["rings"])
     step = 0
+    near_sfx, last_near = zip_up(), -1.0
     for e in log["events"]:
         if e["type"] == "bounce":
             semi = MELODY[step % len(MELODY)]
@@ -112,6 +130,10 @@ def build(log):
                 tr.add(e["t"], note(base, 0.9, 0.7), 0.5)
                 tr.add(e["t"] + 0.06, note(base + 7, 0.8, 0.5), 0.35)
             tr.add(e["t"], shimmer(), 0.35)
+        elif e["type"] == "near_miss":
+            if e["t"] - last_near >= NEAR_MERGE:
+                tr.add(e["t"], near_sfx, 0.3)
+                last_near = e["t"]
     return tr
 
 

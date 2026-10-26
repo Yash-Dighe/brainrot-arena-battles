@@ -27,6 +27,10 @@ BREAK_GROW = 70        # px it expands by while fading
 HIT_F = 9              # frames a ring glows after being bounced on
 TRAIL_N = 9            # trail length in frames
 BLOOM_DIV, BLOOM_T, BLOOM_GAIN = 4, 120, 1.6
+NEAR_F = 22            # frames a near-miss spark lasts
+NEAR_MERGE = 10        # near-misses closer than this many frames share one spark
+NEAR_GROW = 90         # px the spark ring expands by
+BAR_W, BAR_H, BAR_GAP = 640, 16, 8   # progress bar, segment spacing
 
 FONT_CANDIDATES = [
     r"C:\Windows\Fonts\ariblk.ttf",
@@ -100,12 +104,16 @@ class Renderer:
         # frame index -> events, for the effects that key off them
         self.breaks = {}     # ring -> frame it broke
         self.hits = {}       # ring -> sorted frames it was bounced on
+        self.nears = []      # (frame, x, y, ring), one per burst of near-misses
         for e in log["events"]:
             f = int(e["t"] * self.fps)
             if e["type"] == "escape":
                 self.breaks[e["ring"]] = f
             elif e["type"] == "bounce":
                 self.hits.setdefault(e["ring"], []).append(f)
+            elif e["type"] == "near_miss":
+                if not self.nears or f - self.nears[-1][0] >= NEAR_MERGE:
+                    self.nears.append((f, e["x"], e["y"], e["ring"]))
         self.final = max(self.breaks.values()) if len(self.breaks) == n else None
 
     def _background(self):
@@ -141,6 +149,14 @@ class Renderer:
             return 0.0
         return 1 - (fi - last) / HIT_F
 
+    def _near_glow(self, i, fi):
+        for f0, _, _, ring in self.nears:
+            if f0 > fi:
+                break
+            if ring == i and fi - f0 < NEAR_F:
+                return (1 - (fi - f0) / NEAR_F) ** 2
+        return 0.0
+
     def ring_layer(self, fi):
         bw, bh = self.box[2] - self.box[0], self.box[3] - self.box[1]
         layer = Image.new("RGB", (bw * SS, bh * SS))
@@ -150,7 +166,7 @@ class Renderer:
             ang = fr["a"][i]
             col = self.colors[i]
             if ang is not None:
-                k = self._hit_glow(i, fi)
+                k = max(self._hit_glow(i, fi), self._near_glow(i, fi))
                 self._arc(d, ring["r"], ring["width"] * (1 + 0.5 * k), ang, ring["gap"],
                           mix(col, (255, 255, 255), 0.6 * k))
                 continue
@@ -188,9 +204,29 @@ class Renderer:
         im.paste(self.ball, (int(round(f["x"] - self.br)), int(round(f["y"] - self.br))),
                  self.ball)
 
+        self.draw_nears(im, fi)
         im = self.bloom(im)
         self.draw_hud(im, fi)
         return im
+
+    def draw_nears(self, im, fi):
+        """A near-miss throws a white spark where the ball clipped the gap
+        edge: an expanding ring that fades, over a bright core. Bloom then
+        turns it into a flash."""
+        d = ImageDraw.Draw(im)
+        for f0, x, y, ring in self.nears:
+            if f0 > fi:
+                break
+            if fi - f0 >= NEAR_F:
+                continue
+            p = (fi - f0) / NEAR_F
+            col = scale(mix((255, 255, 255), self.colors[ring], p), (1 - p) ** 0.8)
+            r = 14 + NEAR_GROW * ease_out(p)
+            d.ellipse([x - r, y - r, x + r, y + r], outline=col,
+                      width=max(1, int(12 * (1 - p))))
+            c = 26 * (1 - p) ** 2
+            if c >= 1:
+                d.ellipse([x - c, y - c, x + c, y + c], fill=col)
 
     def bloom(self, im):
         w, h = W // BLOOM_DIV, H // BLOOM_DIV
@@ -201,21 +237,39 @@ class Renderer:
 
     def draw_hud(self, im, fi):
         d = ImageDraw.Draw(im)
-        left = sum(1 for a in self.frames[fi]["a"] if a is not None)
-        y = 300
+        n = len(self.rings)
+        broken = sum(1 for a in self.frames[fi]["a"] if a is None)
+        y = 200
+        self.draw_bar(d, fi, broken, y + 165)
         if self.final is not None and fi >= self.final:
             p = clamp((fi - self.final) / 20, 0, 1)
             col = mix(BG_TOP, INK, ease_out(p))
-            d.text((W / 2, y), "ESCAPED", font=font(120), anchor="mm", fill=col)
-            d.text((W / 2, y + 110), f"{self.log['meta']['duration']:.1f}s",
+            d.text((W / 2, y - 10), "ESCAPED", font=font(120), anchor="mm", fill=col)
+            d.text((W / 2, y + 100), f"{self.log['meta']['duration']:.1f}s",
                    font=font(56), anchor="mm", fill=mix(BG_TOP, DIM, ease_out(p)))
             return
         # pop the counter for a few frames each time a ring breaks
         last = max((b for b in self.breaks.values() if b <= fi), default=-99)
         pop = 1 - clamp((fi - last) / 12, 0, 1)
-        d.text((W / 2, y), str(left), font=font(int(150 + 40 * pop)), anchor="mm",
-               fill=INK)
-        d.text((W / 2, y + 110), "rings left", font=font(44), anchor="mm", fill=DIM)
+        d.text((W / 2, y), f"{broken}/{n}", font=font(int(130 + 36 * pop)),
+               anchor="mm", fill=INK)
+        d.text((W / 2, y + 100), "rings broken", font=font(40), anchor="mm", fill=DIM)
+
+    def draw_bar(self, d, fi, broken, y):
+        """One segment per ring, filled in that ring's colour as it breaks.
+        The newest segment flashes white as it fills."""
+        n = len(self.rings)
+        seg = (BAR_W - BAR_GAP * (n - 1)) / n
+        x0 = (W - BAR_W) / 2
+        for i in range(n):
+            x = x0 + i * (seg + BAR_GAP)
+            box = [x, y - BAR_H / 2, x + seg, y + BAR_H / 2]
+            if i < broken:
+                age = clamp((fi - self.breaks.get(i, -99)) / 15, 0, 1)
+                col = mix((255, 255, 255), self.colors[i], ease_out(age))
+            else:
+                col = mix(BG_BOT, DIM, 0.3)
+            d.rounded_rectangle(box, radius=BAR_H / 2, fill=col)
 
 
 # ----------------------------------------------------------------- ffmpeg io

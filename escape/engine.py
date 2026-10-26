@@ -34,17 +34,25 @@ def wrap(a):
 
 
 def make_rings(cfg, rng):
+    """Per-ring difficulty comes straight from the config lists, inner first.
+
+    The difficulty curve is physical, not scripted: a ring is hard because
+    its gap is narrow and its spin keeps the gap away from where the ball
+    falls, never because the sim decides when the ball gets out.
+    """
     rc = cfg["rings"]
+    gaps, spins = rc["gap_deg"], rc["spin_deg_per_sec"]
+    if len(gaps) != len(spins):
+        sys.exit("escape.json: rings.gap_deg and rings.spin_deg_per_sec differ in length")
     phase0 = rng.uniform(0, 360)
     rings = []
-    for i in range(rc["count"]):
-        spin = rc["spin_deg_per_sec"] * (1.0 + rc["spin_step"] * i)
+    for i, (gap, spin) in enumerate(zip(gaps, spins)):
         if rc["alternate"] and i % 2:
             spin = -spin
         rings.append({
             "r": rc["inner_radius"] + rc["spacing"] * i,
             "width": rc["width"],
-            "gap": rc["gap_deg"],
+            "gap": gap,
             "spin": spin,
             "phase": (phase0 + rc["spiral_deg"] * i) % 360.0,
         })
@@ -66,6 +74,7 @@ def simulate(seed, cfg=None):
     sub = pc["substeps"]
     dt = 1.0 / (FPS * sub)
     vmax = bc["max_speed"]
+    near_deg = pc["near_miss_deg"]
 
     x, y = CX, CY
     a = rng.uniform(0, 2 * math.pi)
@@ -119,7 +128,10 @@ def simulate(seed, cfg=None):
                     if k >= len(rings):
                         end_t = ts + vc["tail_seconds"]
                 elif d + br < inner:
-                    passing = False          # fell back in
+                    passing = False          # fell back in: the closest miss there is
+                    events.append({"type": "near_miss", "t": round(ts, 4), "ring": k,
+                                   "kind": "lip", "margin": 0.0,
+                                   "x": round(x, 2), "y": round(y, 2)})
                 continue
 
             if d + br < inner:
@@ -129,7 +141,8 @@ def simulate(seed, cfg=None):
             phi = math.degrees(math.atan2(dy, dx))
             off = abs(wrap(phi - ring_angle(ring, ts)))
             half_ball = math.degrees(math.asin(min(1.0, br / ring["r"])))
-            if off < ring["gap"] / 2 - half_ball:
+            clear = ring["gap"] / 2 - half_ball   # widest offset that fits through
+            if off < clear:
                 passing = True
                 continue
 
@@ -141,6 +154,11 @@ def simulate(seed, cfg=None):
                 events.append({"type": "bounce", "t": round(ts, 4), "ring": k,
                                "x": round(x, 2), "y": round(y, 2),
                                "speed": round(abs(vn), 1)})
+                # missed the gap by only a few degrees: the ball clipped its edge
+                if off - clear < near_deg:
+                    events.append({"type": "near_miss", "t": round(ts, 4), "ring": k,
+                                   "kind": "edge", "margin": round(off - clear, 2),
+                                   "x": round(x, 2), "y": round(y, 2)})
             x, y = CX + nx * (inner - br), CY + ny * (inner - br)
 
         fi += 1
@@ -161,28 +179,77 @@ def simulate(seed, cfg=None):
 
 
 # -------------------------------------------------------------- selection
+def segments(log):
+    """Seconds each ring held the ball, inner first (only rings that broke)."""
+    ts = [0.0] + [e["t"] for e in log["events"] if e["type"] == "escape"]
+    return [b - a for a, b in zip(ts, ts[1:])]
+
+
+def window(v, lo, hi):
+    """1 inside [lo, hi], falling off smoothly outside it."""
+    if v < lo:
+        return v / lo
+    if v > hi:
+        return hi / v
+    return 1.0
+
+
+def shape_terms(log, cfg):
+    """The progress-bar shape, term by term, each 0..1 (1 = on target).
+
+    hook    half the rings gone inside the first few seconds
+    middle  each middle ring holds the ball for a few seconds, no more
+    growth  each ring takes longer than the one before it
+    boss    the last rings are one long stall, full of near-misses
+    stall   no ring before the boss rings stalls long enough to lose viewers
+    """
+    sc, n = cfg["shape"], len(log["meta"]["rings"])
+    seg = segments(log)
+    nb, nh = sc["boss_rings"], sc["hook_rings"]
+    escapes = [e["t"] for e in log["events"] if e["type"] == "escape"]
+
+    hook = min(1.0, sum(t <= sc["hook_seconds"] for t in escapes) / nh)
+    lo, hi = sc["middle_seconds"]
+    mid = seg[nh:n - nb]
+    middle = sum(window(g, lo, hi) for g in mid) / len(mid) if mid else 1.0
+
+    # fraction of ring pairs (after the hook) that take longer as they go out;
+    # a ring may be up to `growth_slack` faster than an earlier one and count
+    tail = seg[nh:]
+    pairs = [(a, b) for i, a in enumerate(tail) for b in tail[i + 1:]]
+    growth = (sum(b >= a * (1 - sc["growth_slack"]) for a, b in pairs) / len(pairs)
+              if pairs else 1.0)
+
+    # the boss phase is the last boss_rings rings, from the moment the ball
+    # reaches the first of them to the final break
+    t0 = escapes[n - nb - 1] if n > nb else 0.0
+    near = sum(1 for e in log["events"]
+               if e["type"] == "near_miss" and e["ring"] >= n - nb)
+    boss = (min(1.0, (escapes[-1] - t0) / sc["boss_min_seconds"])
+            * min(1.0, near / sc["boss_near_misses"]))
+
+    worst = max(seg[:n - nb]) if n > nb else 0.0
+    stall = min(1.0, sc["stall_max_seconds"] / worst) ** 2 if worst else 1.0
+    return {"hook": hook, "middle": middle, "growth": growth, "boss": boss,
+            "stall": stall, "near": near}
+
+
 def score(log, cfg):
     """0..1, higher is better. None if the run is unusable.
 
     Unusable: didn't finish, or finished outside the duration window (the
-    60s floor is the whole business case). Among usable runs, prefer even
-    pacing -- a 25s drought on one ring is where viewers leave -- and a
-    finish that speeds up a little rather than slows down.
+    60s floor is the whole business case). Usable runs are scored on how
+    closely they follow the progress-bar shape: a fast hook, a middle that
+    slows ring by ring, then one long tense stall on the last ring. The
+    stall term multiplies the rest, so an early drought sinks a run.
     """
     m, vc = log["meta"], cfg["video"]
     if not m["escaped"]:
         return None
-    dur = m["duration"]
-    if not (vc["min_seconds"] <= dur <= vc["max_seconds"]):
+    if not (vc["min_seconds"] <= m["duration"] <= vc["max_seconds"]):
         return None
-    ts = [0.0] + [e["t"] for e in log["events"] if e["type"] == "escape"]
-    gaps = [b - a for a, b in zip(ts, ts[1:])]
-    mean = sum(gaps) / len(gaps)
-    worst = max(gaps) / mean                  # 1.0 = perfectly even
-    half = len(gaps) // 2
-    accel = (sum(gaps[:half]) / half) / (sum(gaps[half:]) / (len(gaps) - half))
-    s = 1.0 / worst                           # droughts dominate
-    s *= min(1.0, 0.75 + 0.25 * accel)        # mild bonus for a faster finish
+    t = shape_terms(log, cfg)
+    s = (t["hook"] * t["middle"] * t["growth"] * t["boss"]) ** 0.25 * t["stall"]
     return round(s, 3)
 
 
@@ -203,7 +270,42 @@ def summarize(log):
     if not m["escaped"]:
         k = sum(1 for e in log["events"] if e["type"] == "escape")
         return f"seed {m['seed']}: TIMEOUT after {k}/{len(m['rings'])} rings"
-    return f"seed {m['seed']}: escaped in {m['duration']:.1f}s, {n} bounces"
+    nm = sum(1 for e in log["events"] if e["type"] == "near_miss")
+    return f"seed {m['seed']}: escaped in {m['duration']:.1f}s, {n} bounces, {nm} near-misses"
+
+
+def survey(n, cfg):
+    """Duration spread, usable rate, and how long each ring holds the ball."""
+    bar = cfg["shape"]["usable_score"]
+    durs, scores, fails = [], [], 0
+    seg = [[] for _ in cfg["rings"]["gap_deg"]]
+    for seed in range(n):
+        log = simulate(seed, cfg)
+        for i, g in enumerate(segments(log)):
+            seg[i].append(g)
+        if not log["meta"]["escaped"]:
+            fails += 1
+            continue
+        durs.append(log["meta"]["duration"])
+        s = score(log, cfg)
+        if s is not None:
+            scores.append(s)
+
+    def q(v, p):
+        return v[min(len(v) - 1, int(p * len(v)))]
+
+    ok = sum(s >= bar for s in scores)
+    print(f"{len(durs)}/{n} escaped, {fails} timeouts; {len(scores)}/{n} in the "
+          f"duration window; usable (score >= {bar}) {ok}/{n}")
+    if durs:
+        durs.sort()
+        print(f"duration  min {durs[0]:.1f}  p25 {q(durs, .25):.1f}  "
+              f"median {q(durs, .5):.1f}  p75 {q(durs, .75):.1f}  max {durs[-1]:.1f}")
+    print("ring   p10   med   p90   (seconds the ring held the ball)")
+    for i, v in enumerate(seg):
+        v.sort()
+        if v:
+            print(f"{i:4d} {q(v, .1):5.1f} {q(v, .5):5.1f} {q(v, .9):5.1f}")
 
 
 def main():
@@ -217,23 +319,7 @@ def main():
     cfg = load_config()
 
     if args.survey:
-        durs, fails, ok = [], 0, 0
-        for seed in range(args.survey):
-            log = simulate(seed, cfg)
-            if log["meta"]["escaped"]:
-                durs.append(log["meta"]["duration"])
-                ok += score(log, cfg) is not None
-            else:
-                fails += 1
-        durs.sort()
-        if durs:
-            q = lambda p: durs[min(len(durs) - 1, int(p * len(durs)))]
-            print(f"{len(durs)}/{args.survey} escaped, {fails} timeouts; "
-                  f"usable {ok}/{args.survey}")
-            print(f"duration  min {durs[0]:.1f}  p25 {q(.25):.1f}  "
-                  f"median {q(.5):.1f}  p75 {q(.75):.1f}  max {durs[-1]:.1f}")
-        else:
-            print(f"0/{args.survey} escaped")
+        survey(args.survey, cfg)
         return
 
     if args.find:
