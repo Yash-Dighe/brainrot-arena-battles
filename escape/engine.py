@@ -34,27 +34,30 @@ def wrap(a):
 
 
 def make_rings(cfg, rng):
-    """Per-ring difficulty comes straight from the config lists, inner first.
+    """Every gap starts lined up at t=0; each ring spins `spin_step` deg/s
+    faster than the one inside it, so the gaps drift apart over the run.
 
-    The difficulty curve is physical, not scripted: a ring is hard because
-    its gap is narrow and its spin keeps the gap away from where the ball
-    falls, never because the sim decides when the ball gets out.
+    Per-ring gap widths come straight from the config list, inner first.
+    The difficulty curve is physical, not scripted: early on the aligned
+    gaps let the ball fly through several rings at once, and as they drift
+    apart each ring has to be escaped on its own.
     """
     rc = cfg["rings"]
-    gaps, spins = rc["gap_deg"], rc["spin_deg_per_sec"]
-    if len(gaps) != len(spins):
-        sys.exit("escape.json: rings.gap_deg and rings.spin_deg_per_sec differ in length")
+    n, nb = len(rc["gap_deg"]), cfg["shape"]["boss_rings"]
     phase0 = rng.uniform(0, 360)
     rings = []
-    for i, (gap, spin) in enumerate(zip(gaps, spins)):
+    for i, gap in enumerate(rc["gap_deg"]):
+        spin = rc["spin_deg_per_sec"] + rc["spin_step"] * i
         if rc["alternate"] and i % 2:
             spin = -spin
         rings.append({
-            "r": rc["inner_radius"] + rc["spacing"] * i,
+            # the boss rings sit apart from the rest, as a final wall
+            "r": (rc["inner_radius"] + rc["spacing"] * i
+                  + (rc["boss_push_px"] if i >= n - nb else 0)),
             "width": rc["width"],
             "gap": gap,
             "spin": spin,
-            "phase": (phase0 + rc["spiral_deg"] * i) % 360.0,
+            "phase": phase0,
         })
     return rings
 
@@ -197,8 +200,8 @@ def window(v, lo, hi):
 def shape_terms(log, cfg):
     """The progress-bar shape, term by term, each 0..1 (1 = on target).
 
-    hook    half the rings gone inside the first few seconds
-    middle  each middle ring holds the ball for a few seconds, no more
+    hook    at least hook_rings rings gone inside the first few seconds
+    middle  each ring after the hook holds the ball for a few seconds, no more
     growth  each ring takes longer than the one before it
     boss    the last rings are one long stall, full of near-misses
     stall   no ring before the boss rings stalls long enough to lose viewers
@@ -208,10 +211,16 @@ def shape_terms(log, cfg):
     nb, nh = sc["boss_rings"], sc["hook_rings"]
     escapes = [e["t"] for e in log["events"] if e["type"] == "escape"]
 
-    hook = min(1.0, sum(t <= sc["hook_seconds"] for t in escapes) / nh)
+    # the burst size varies by seed, so the middle is whatever broke after
+    # the hook window rather than a fixed slice of rings
+    nh_got = sum(t <= sc["hook_seconds"] for t in escapes)
+    hook = min(1.0, nh_got / nh)
+    nh = min(nh_got, n - nb)
     lo, hi = sc["middle_seconds"]
     mid = seg[nh:n - nb]
-    middle = sum(window(g, lo, hi) for g in mid) / len(mid) if mid else 1.0
+    middle = sum(window(g, lo, hi) for g in mid) / len(mid) if mid else 0.0
+    # a burst that swallows the middle leaves nothing between hook and boss
+    middle *= min(1.0, len(mid) / sc["middle_rings_min"])
 
     # fraction of ring pairs (after the hook) that take longer as they go out;
     # a ring may be up to `growth_slack` faster than an earlier one and count

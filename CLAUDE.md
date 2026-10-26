@@ -14,30 +14,71 @@ only draws -> synthesized audio), same 60s+ and royalty-free constraints.
 - Kept deliberately plain. Variants (growing ball, endless rings, racing
   balls) come after the plain version looks right.
 
-**Progress-bar shape (2026-10-26).** Each run is tuned to: a hook that breaks
-6 of 12 rings inside ~10s, middle rings that hold 4-8s each and get slower,
-then the last 2 rings as a long "boss" stall with near-misses, then a 3s end.
-- Difficulty is per ring in `escape.json` (`gap_deg`, `spin_deg_per_sec`
-  lists, inner first). Physics stays real; nothing is scripted. Gravity is
-  5000 (was 1500) because more bounces per second made ring times far less
-  random. `spiral_deg` 150 paces the hook (near 0, gaps line up and the ball
-  flies through several rings at once).
+**Progress-bar shape (2026-10-26), committed on master as `cb1ee3d`.** Target
+shape: a hook that breaks ~half the rings in ~10s, middle rings that hold
+4-8s each and get slower, then the last rings as a long "boss" stall with
+near-misses, then a 3s end, 62-90s total. That commit hit 25/100 usable
+using staggered gaps (`spiral_deg` 150) and gravity 5000.
 - `near_miss` events: a bounce within `near_miss_deg` (6) of the gap edge,
   or a ball that enters the gap and falls back (`kind: lip`).
 - `score()` is shape-based (`shape_terms()`; targets in `escape.json` under
   `shape`). Hook, middle, growth and boss terms combine as a geometric mean;
   an early stall multiplies the result. Runs outside 62-90s get None.
-- Renderer: `k/12` counter plus a segmented progress bar; near-misses flash
+- Renderer: `k/N` counter plus a segmented progress bar; near-misses flash
   the ring white and throw a spark. Audio: a rising detuned whistle.
-- Survey (seeds 0-99): 25/100 usable (score >= 0.6), 37/100 in the 62-90s
-  window, 4 timeouts, median 73.6s. Hook and middle hit their targets;
-  **the boss is the limit.** Its time is close to memoryless (p90 ~3x
-  median), so half the runs land too short or too long.
 - **Near-misses are capped by geometry.** Near-misses per escape attempt
-  ~= edge-zone width / passable gap width, and the outer ring only gets ~2
-  bounces/s. A boss with 10+ near-misses needs a gap so narrow that stalls
-  run to ~100s. The median boss gets 3; seed search finds runs with 7-8.
-  Raising this needs more bounces per second, not a narrower gap.
+  ~= edge-zone width / passable gap width, and the outer ring only gets
+  ~1-2 bounces/s. A boss with 10+ near-misses needs a gap so narrow that
+  stalls run to ~100s. Raising this needs more bounces per second.
+- **Boss time is close to memoryless** (p90 ~3x median). Splitting the boss
+  across 3-4 moderately hard rings cuts the variance; one very hard ring
+  does not.
+
+### HANDOFF (2026-10-26) -- branch `escape-aligned-rings`, work in progress
+
+Yash's direction after `cb1ee3d`, in his words: revert gravity; "make it so
+that all the rings are aligned at 0sec, but all spin at very slightly
+different speeds so that they eventually become mismatched". Then: the
+opening burst that alignment causes "might be good for us because it might
+capture the attention of the viewer", so "add even more circles and maybe
+move out the boss rings even further" to keep the video long.
+
+Done on this branch:
+- Gravity back to 1500 (launch 520, max speed 2400).
+- All gaps share one phase at t=0 (`spiral_deg` removed). Ring i spins at
+  `spin_deg_per_sec + spin_step * i`.
+- `rings.boss_push_px` adds radial space before the last
+  `shape.boss_rings` rings.
+- Scorer: the middle is whatever broke after `hook_seconds` (burst size
+  varies by seed), and it must hold at least `shape.middle_rings_min` (4)
+  rings. Without that rule, a burst that swallowed the whole middle
+  scored a perfect middle term -- a real hole, now closed.
+- `escape/tune.py`: `--why N` tallies rejection reasons, `--search N` is a
+  parallel random config search with a held-out check (`--step lo hi` sets
+  the spin-step range).
+
+**Where it stands: `escape.json` currently scores 0/100 usable.** It is an
+18-ring layout (spin 68, step 1.12, 4 boss rings, push 40) that scored
+151/1000 before the middle rule existed. In those runs the burst cleared all
+14 non-boss rings in ~4s, then 4 boss rings took ~74s.
+
+**The open problem.** With near-equal spins the gaps stay lined up for so
+long that the ball either bursts through whole groups of rings or stalls on
+them. There is no 4-8s middle phase. Searches with `spin_step` 0.5-4 found
+at most 0-3% usable once the middle rule applied.
+
+**Untested next steps, roughly in order:**
+1. `python escape/tune.py --search 600 --step 4 12` -- a larger step
+   separates the gaps sooner and may restore a middle phase. Yash asked for
+   "very slightly different" speeds, so report the step size alongside the
+   result and let him judge.
+2. Ask Yash whether "burst -> 3-4 escalating boss rings" with no middle is
+   acceptable. If yes, set `middle_rings_min` to 0, re-search, and render.
+3. Scale up: `tune.py` searches are cheap (~27ms/sim). Run thousands of
+   candidates, then refine locally around the top ones.
+4. When a config clears >= 15% on the holdout: update `escape.json`, run
+   `python escape/engine.py --survey 100`, render with `python
+   escape/make.py`, and look at frames (`render.py --at`) before reporting.
 
 **Everything below describes the brainrot battles, which are parked, not
 abandoned.** Their code (`sim/`, `tools/`, `characters.json`) stays untouched
