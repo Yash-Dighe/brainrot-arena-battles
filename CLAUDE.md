@@ -34,51 +34,46 @@ using staggered gaps (`spiral_deg` 150) and gravity 5000.
   across 3-4 moderately hard rings cuts the variance; one very hard ring
   does not.
 
-### HANDOFF (2026-10-26) -- branch `escape-aligned-rings`, work in progress
+### HANDOFF (2026-10-26) -- branch `escape-aligned-rings`
 
-Yash's direction after `cb1ee3d`, in his words: revert gravity; "make it so
-that all the rings are aligned at 0sec, but all spin at very slightly
-different speeds so that they eventually become mismatched". Then: the
-opening burst that alignment causes "might be good for us because it might
-capture the attention of the viewer", so "add even more circles and maybe
-move out the boss rings even further" to keep the video long.
+Gaps are still aligned at t=0 and ring i still spins at
+`spin_deg_per_sec + spin_step * i`. Gravity is 1500.
 
-Done on this branch:
-- Gravity back to 1500 (launch 520, max speed 2400).
-- All gaps share one phase at t=0 (`spiral_deg` removed). Ring i spins at
-  `spin_deg_per_sec + spin_step * i`.
-- `rings.boss_push_px` adds radial space before the last
-  `shape.boss_rings` rings.
-- Scorer: the middle is whatever broke after `hook_seconds` (burst size
-  varies by seed), and it must hold at least `shape.middle_rings_min` (4)
-  rings. Without that rule, a burst that swallowed the whole middle
-  scored a perfect middle term -- a real hole, now closed.
-- `escape/tune.py`: `--why N` tallies rejection reasons, `--search N` is a
-  parallel random config search with a held-out check (`--step lo hi` sets
-  the spin-step range).
+**Target shape changed (Yash):** a burst up front, then a long mostly-dry
+stretch with occasional pops, then the ball escapes at the end, 65-90s
+total. The near-miss and 4-8s-middle requirements are gone. They fought
+the physics, which is why everything scored ~3%.
+- `score()`/`shape_terms()` combine four terms as a geometric mean:
+  `burst` (rings broken by `burst_seconds`), `cadence` (mean gap between
+  breaks after the burst, inside `middle_break_interval_lo..hi`),
+  `silence` (no gap longer than `silence_max_seconds`) and `escape` (the
+  last ring holds at least `finale_min_seconds`). All targets live in
+  `escape.json` under `shape`.
+- Window: escape >= `min_seconds` (65), and escape + `tail_seconds` <=
+  `max_seconds` (90), so the whole video fits.
+- Near-miss events are still logged and drawn, but they don't score.
+- `boss_rings` moved to `rings` (it only drives `boss_push_px`).
+- `tune.py` crash-safety: spawn pool, capped `--jobs` (`1` = serial),
+  every result appended to `--out` jsonl as it lands.
 
-**Where it stands: `escape.json` currently scores 0/100 usable.** It is an
-18-ring layout (spin 68, step 1.12, 4 boss rings, push 40) that scored
-151/1000 before the middle rule existed. In those runs the burst cleared all
-14 non-boss rings in ~4s, then 4 boss rings took ~74s.
+**Where it stands:** a 17-ring config (spin -89.7, step 3.93, 1 boss ring,
+no push) scores **13.8% usable on a 400-seed holdout** (55/400). Only about
+30% of runs land in the window, and about 45% of those are usable. The
+spin step is 3.93 deg/s per ring, not "very slightly" different: inner
+-89.7 to outer -26.8. Smaller steps searched worse.
 
-**The open problem.** With near-equal spins the gaps stay lined up for so
-long that the ball either bursts through whole groups of rings or stalls on
-them. There is no 4-8s middle phase. Searches with `spin_step` 0.5-4 found
-at most 0-3% usable once the middle rule applied.
-
-**Untested next steps, roughly in order:**
-1. `python escape/tune.py --search 600 --step 4 12` -- a larger step
-   separates the gaps sooner and may restore a middle phase. Yash asked for
-   "very slightly different" speeds, so report the step size alongside the
-   result and let him judge.
-2. Ask Yash whether "burst -> 3-4 escalating boss rings" with no middle is
-   acceptable. If yes, set `middle_rings_min` to 0, re-search, and render.
-3. Scale up: `tune.py` searches are cheap (~27ms/sim). Run thousands of
-   candidates, then refine locally around the top ones.
-4. When a config clears >= 15% on the holdout: update `escape.json`, run
-   `python escape/engine.py --survey 100`, render with `python
-   escape/make.py`, and look at frames (`render.py --at`) before reporting.
+**Blocker: duration spread, not shape.** The burst swallows 5-15 rings
+depending on seed, and each later ring's hold time is close to memoryless,
+so durations range from 1s to 145s (median 70). About 48% of runs are too
+short. Every config family tried (1800+ candidates, hill-climb, a sharp
+burst-to-middle gap drop) plateaus at 14-17% holdout. Hill-climbing on 200
+train seeds overfits (27% train -> 14% holdout).
+- A likely next lever needs Yash's OK first: a new mechanic that bounds
+  each ring's hold time, e.g. the trapped ring's gap slowly widens. That
+  needs a per-frame gap in the log and renderer support.
+- There's no ffmpeg on the Mac, so `make.py` can't encode. Frames via
+  `render.py --at` are fine. Seed 62 is the current best (score 1.0,
+  escape 79.2s, 82.2s video).
 
 **Everything below describes the brainrot battles, which are parked, not
 abandoned.** Their code (`sim/`, `tools/`, `characters.json`) stays untouched

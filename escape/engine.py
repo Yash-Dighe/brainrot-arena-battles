@@ -43,7 +43,7 @@ def make_rings(cfg, rng):
     apart each ring has to be escaped on its own.
     """
     rc = cfg["rings"]
-    n, nb = len(rc["gap_deg"]), cfg["shape"]["boss_rings"]
+    n, nb = len(rc["gap_deg"]), rc["boss_rings"]
     phase0 = rng.uniform(0, 360)
     rings = []
     for i, gap in enumerate(rc["gap_deg"]):
@@ -198,67 +198,56 @@ def window(v, lo, hi):
 
 
 def shape_terms(log, cfg):
-    """The progress-bar shape, term by term, each 0..1 (1 = on target).
+    """The burst -> dry -> escape shape, term by term, each 0..1 (1 = on target).
 
-    hook    at least hook_rings rings gone inside the first few seconds
-    middle  each ring after the hook holds the ball for a few seconds, no more
-    growth  each ring takes longer than the one before it
-    boss    the last rings are one long stall, full of near-misses
-    stall   no ring before the boss rings stalls long enough to lose viewers
+    burst    at least burst_rings rings gone inside the first burst_seconds
+    cadence  mean gap between breaks after the burst inside
+             middle_break_interval_lo..hi: occasional pops, not busy
+    silence  no gap after the burst longer than silence_max_seconds
+    escape   the last ring holds the ball at least finale_min_seconds
+             before it breaks, so the ending reads as earned
     """
-    sc, n = cfg["shape"], len(log["meta"]["rings"])
-    seg = segments(log)
-    nb, nh = sc["boss_rings"], sc["hook_rings"]
+    sc = cfg["shape"]
     escapes = [e["t"] for e in log["events"] if e["type"] == "escape"]
+    if not escapes:
+        return {"burst": 0.0, "cadence": 0.0, "silence": 0.0, "escape": 0.0,
+                "burst_n": 0, "interval": None}
+    early = [t for t in escapes if t <= sc["burst_seconds"]]
+    burst = min(1.0, len(early) / sc["burst_rings"])
 
-    # the burst size varies by seed, so the middle is whatever broke after
-    # the hook window rather than a fixed slice of rings
-    nh_got = sum(t <= sc["hook_seconds"] for t in escapes)
-    hook = min(1.0, nh_got / nh)
-    nh = min(nh_got, n - nb)
-    lo, hi = sc["middle_seconds"]
-    mid = seg[nh:n - nb]
-    middle = sum(window(g, lo, hi) for g in mid) / len(mid) if mid else 0.0
-    # a burst that swallows the middle leaves nothing between hook and boss
-    middle *= min(1.0, len(mid) / sc["middle_rings_min"])
+    # gaps from the last burst break (or t=0) to each later break, final included
+    ts = [early[-1] if early else 0.0] + escapes[len(early):]
+    gaps = [b - a for a, b in zip(ts, ts[1:])]
+    if gaps:
+        interval = sum(gaps) / len(gaps)
+        cadence = window(interval, sc["middle_break_interval_lo"],
+                         sc["middle_break_interval_hi"])
+        silence = min(1.0, sc["silence_max_seconds"] / max(gaps)) ** 2
+    else:
+        interval, cadence, silence = None, 0.0, 0.0   # burst swallowed every ring
 
-    # fraction of ring pairs (after the hook) that take longer as they go out;
-    # a ring may be up to `growth_slack` faster than an earlier one and count
-    tail = seg[nh:]
-    pairs = [(a, b) for i, a in enumerate(tail) for b in tail[i + 1:]]
-    growth = (sum(b >= a * (1 - sc["growth_slack"]) for a, b in pairs) / len(pairs)
-              if pairs else 1.0)
-
-    # the boss phase is the last boss_rings rings, from the moment the ball
-    # reaches the first of them to the final break
-    t0 = escapes[n - nb - 1] if n > nb else 0.0
-    near = sum(1 for e in log["events"]
-               if e["type"] == "near_miss" and e["ring"] >= n - nb)
-    boss = (min(1.0, (escapes[-1] - t0) / sc["boss_min_seconds"])
-            * min(1.0, near / sc["boss_near_misses"]))
-
-    worst = max(seg[:n - nb]) if n > nb else 0.0
-    stall = min(1.0, sc["stall_max_seconds"] / worst) ** 2 if worst else 1.0
-    return {"hook": hook, "middle": middle, "growth": growth, "boss": boss,
-            "stall": stall, "near": near}
+    final = escapes[-1] - (escapes[-2] if len(escapes) > 1 else 0.0)
+    escape = min(1.0, final / sc["finale_min_seconds"])
+    return {"burst": burst, "cadence": cadence, "silence": silence, "escape": escape,
+            "burst_n": len(early), "interval": interval}
 
 
 def score(log, cfg):
     """0..1, higher is better. None if the run is unusable.
 
-    Unusable: didn't finish, or finished outside the duration window (the
-    60s floor is the whole business case). Usable runs are scored on how
-    closely they follow the progress-bar shape: a fast hook, a middle that
-    slows ring by ring, then one long tense stall on the last ring. The
-    stall term multiplies the rest, so an early drought sinks a run.
+    Unusable: no escape (timeout), or a video outside the duration window
+    (the 65s floor is the whole business case). Usable runs are scored on
+    the burst -> dry -> escape shape; terms combine as a geometric mean, so
+    any one failing sinks the run.
     """
     m, vc = log["meta"], cfg["video"]
     if not m["escaped"]:
         return None
-    if not (vc["min_seconds"] <= m["duration"] <= vc["max_seconds"]):
+    # max bounds the whole video, end tail included
+    if not (vc["min_seconds"] <= m["duration"] <= vc["max_seconds"] - vc["tail_seconds"]):
         return None
     t = shape_terms(log, cfg)
-    s = (t["hook"] * t["middle"] * t["growth"] * t["boss"]) ** 0.25 * t["stall"]
+    s = (t["burst"] * t["cadence"] * t["silence"] * t["escape"]) ** 0.25
     return round(s, 3)
 
 

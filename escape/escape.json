@@ -2,13 +2,14 @@
   "notes": "All tuning for the ring-escape format lives here, never in code. Distances are px in the 1080x1920 frame, angles in degrees, time in seconds. Re-run `python escape/engine.py --survey 100` after editing to see how durations and per-ring timings move.",
 
   "rings": {
-    "notes": "gap_deg is per ring, inner first; its length is the ring count. All gaps start lined up at t=0. Ring i spins at spin_deg_per_sec + spin_step * i, so the gaps slowly drift apart: early on the ball flies through several aligned rings at once, later each ring has to be escaped alone. Negative spin turns the other way. boss_push_px adds radial space before the last shape.boss_rings rings, so they read as a final wall.",
-    "gap_deg":          [88, 86, 85, 84, 82, 81, 79, 78, 77,   70, 64, 57, 51, 44,   27, 22.5, 18, 13],
-    "spin_deg_per_sec": 68,
-    "spin_step": 1.12,
+    "notes": "gap_deg is per ring, inner first; its length is the ring count. All gaps start lined up at t=0. Ring i spins at spin_deg_per_sec + spin_step * i, so the gaps slowly drift apart: early on the ball flies through several aligned rings at once, later each ring has to be escaped alone. Negative spin turns the other way. boss_push_px adds radial space before the last boss_rings rings, so they read as a final wall.",
+    "gap_deg":          [71.3, 68.6, 65.9, 63.2, 60.5, 57.8, 55.1, 52.4, 49.7, 46.4, 43.1, 39.8, 36.5, 33.3, 30.0, 26.7, 26.7],
+    "spin_deg_per_sec": -89.7,
+    "spin_step": 3.93,
     "inner_radius": 120,
-    "spacing": 20.29,
-    "boss_push_px": 40,
+    "spacing": 24.06,
+    "boss_push_px": 0,
+    "boss_rings": 1,
     "width": 8,
     "alternate": false
   },
@@ -27,21 +28,18 @@
   },
 
   "shape": {
-    "notes": "What engine.score() rewards. The hook wants at least hook_rings rings broken inside hook_seconds (the aligned gaps make it a burst). The last boss_rings are the boss; every ring between is the middle.",
-    "hook_rings": 6,
-    "hook_seconds": 10,
-    "middle_seconds": [4, 8],
-    "middle_rings_min": 4,
-    "growth_slack": 0.25,
-    "boss_rings": 4,
-    "boss_min_seconds": 18,
-    "boss_near_misses": 10,
-    "stall_max_seconds": 10,
-    "usable_score": 0.6
+    "notes": "What engine.score() rewards: a burst, a long dry stretch, then the escape. burst wants burst_rings rings broken inside burst_seconds. After the burst, the mean gap between breaks (the final escape included) should sit inside middle_break_interval_lo..hi seconds, and no single gap may run past silence_max_seconds. The last ring should hold the ball at least finale_min_seconds. Terms combine as a geometric mean; usable means score >= usable_score.",
+    "burst_rings": 6,
+    "burst_seconds": 10,
+    "middle_break_interval_lo": 8,
+    "middle_break_interval_hi": 12,
+    "silence_max_seconds": 20,
+    "finale_min_seconds": 8,
+    "usable_score": 0.85
   },
 
   "video": {
-    "min_seconds": 62,
+    "min_seconds": 65,
     "max_seconds": 90,
     "timeout": 150,
     "tail_seconds": 3.0
