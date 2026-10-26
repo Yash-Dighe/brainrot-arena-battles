@@ -1,0 +1,34 @@
+{
+  "notes": "All tuning for the ring-escape format lives here, never in code. Distances are px in the 1080x1920 frame, angles in degrees, time in seconds. Re-run `python escape/engine.py --survey` after editing to see how durations move.",
+
+  "rings": {
+    "count": 12,
+    "inner_radius": 130,
+    "spacing": 34,
+    "width": 8,
+    "gap_deg": 40,
+    "spin_deg_per_sec": 60,
+    "spin_step": 0.06,
+    "alternate": false,
+    "spiral_deg": 22
+  },
+
+  "ball": {
+    "radius": 15,
+    "launch_speed": 520,
+    "max_speed": 2400
+  },
+
+  "physics": {
+    "gravity": 1500,
+    "restitution": 1.0,
+    "substeps": 8
+  },
+
+  "video": {
+    "min_seconds": 62,
+    "max_seconds": 90,
+    "timeout": 150,
+    "tail_seconds": 3.0
+  }
+}

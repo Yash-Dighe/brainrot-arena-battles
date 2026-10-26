@@ -1,5 +1,25 @@
 # Brainrot Arena — project context
 
+## CURRENT FOCUS (2026-10-23): ring escape, in `escape/`
+
+The project pivoted to character-free "satisfying" videos: a ball escapes
+concentric spinning rings, each with a gap; a ring breaks when the ball passes
+through it. Same discipline as below (config -> headless sim -> renderer that
+only draws -> synthesized audio), same 60s+ and royalty-free constraints.
+
+- `escape/escape.json` holds all tuning; `engine.py` is the sim
+  (`--survey N` shows the duration spread, `--find N` keeps the best seed);
+  `render.py` draws (`--at`, `--preview`); `audio.py` synthesizes SFX;
+  `make.py` does search -> render -> audio -> mux in one command.
+- Kept deliberately plain. Variants (growing ball, endless rings, racing
+  balls) come after the plain version looks right.
+- Survey at 2026-10-26: 20/20 escape, but only 6/20 usable; median 63s,
+  min 44s. Durations are the tuning problem to look at first.
+
+**Everything below describes the brainrot battles, which are parked, not
+abandoned.** Their code (`sim/`, `tools/`, `characters.json`) stays untouched
+on `master` and is also on the `brainrot` branch. Narration is parked too.
+
 Automated 1v1 physics ball-battle videos for TikTok (later YouTube Shorts).
 Format reference: `@kinetiq.studios` on Instagram Reels.
 
