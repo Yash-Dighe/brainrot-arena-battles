@@ -38,6 +38,16 @@ using staggered gaps (`spiral_deg` 150) and gravity 5000.
   across 3-4 moderately hard rings cuts the variance; one very hard ring
   does not.
 
+**Invariant: seeds are not portable across machines.** The same seed, on
+the same commit with the same `escape.json`, runs a different trajectory on
+macOS than on Windows. The sim is chaotic, and small libm differences
+between the platforms grow until the run diverges. Seed 62 escapes at
+79.2s with score 1.0 on the Mac but runs to 142.5s with score None on
+Windows; the aggregate rate still matches (55/400 usable on the Mac, 59/400
+on Windows). So only the machine that renders may pick the seed, and seed
+numbers never travel between machines. Rendering is now on the Mac, so Mac
+seeds are the ones that count.
+
 ### HANDOFF (2026-10-26) -- branch `escape-aligned-rings`
 
 Gaps are still aligned at t=0 and ring i still spins at
