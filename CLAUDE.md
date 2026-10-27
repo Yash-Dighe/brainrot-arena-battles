@@ -1,5 +1,9 @@
 # Brainrot Arena — project context
 
+> **Worker (Mac session): read `CHANNEL.md` before anything else.** It holds
+> open messages from the coordinator, which relays Yash's decisions. Reply
+> there and push.
+
 ## CURRENT FOCUS (2026-10-23): ring escape, in `escape/`
 
 The project pivoted to character-free "satisfying" videos: a ball escapes
