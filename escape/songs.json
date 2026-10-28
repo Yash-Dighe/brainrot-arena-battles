@@ -1,0 +1,82 @@
+{
+  "notes": "Bounce melodies. Public domain in the US only: composed before 1929 by a composer long dead, original theme, never a modern arrangement. notes are semitones above root_midi (the tonic, 60 = C4), main recognizable theme only, pitch order only -- bounce timing sets the rhythm. mode picks the final chord and the ring-break chimes. year is the composition year; for the Canon it is the earliest estimate (c. 1680-1706).",
+  "songs": [
+    {
+      "name": "Fur Elise",
+      "composer": "Ludwig van Beethoven",
+      "year": 1810,
+      "root_midi": 69,
+      "mode": "minor",
+      "notes": [7, 6, 7, 6, 7, 2, 5, 3, 0,  -9, -5, 0, 2,  -5, -1, 2, 3,
+                7, 6, 7, 6, 7, 2, 5, 3, 0,  -9, -5, 0, 2,  -5, 3, 2, 0]
+    },
+    {
+      "name": "Ode to Joy",
+      "composer": "Ludwig van Beethoven",
+      "year": 1824,
+      "root_midi": 62,
+      "mode": "major",
+      "notes": [4, 4, 5, 7, 7, 5, 4, 2, 0, 0, 2, 4, 4, 2, 2,
+                4, 4, 5, 7, 7, 5, 4, 2, 0, 0, 2, 4, 2, 0, 0,
+                2, 2, 4, 0, 2, 4, 5, 4, 0, 2, 4, 5, 4, 2, 0, 2, -5,
+                4, 4, 5, 7, 7, 5, 4, 2, 0, 0, 2, 4, 2, 0, 0]
+    },
+    {
+      "name": "In the Hall of the Mountain King",
+      "composer": "Edvard Grieg",
+      "year": 1875,
+      "root_midi": 59,
+      "mode": "minor",
+      "notes": [0, 2, 3, 5, 7, 3, 7,  6, 2, 6,  5, 1, 5,
+                0, 2, 3, 5, 7, 3, 7, 12,  10, 7, 3, 7, 10]
+    },
+    {
+      "name": "Twinkle Twinkle Little Star",
+      "composer": "Traditional (French, 'Ah! vous dirai-je, maman')",
+      "year": 1761,
+      "root_midi": 60,
+      "mode": "major",
+      "notes": [0, 0, 7, 7, 9, 9, 7,  5, 5, 4, 4, 2, 2, 0,
+                7, 7, 5, 5, 4, 4, 2,  7, 7, 5, 5, 4, 4, 2,
+                0, 0, 7, 7, 9, 9, 7,  5, 5, 4, 4, 2, 2, 0]
+    },
+    {
+      "name": "Eine kleine Nachtmusik",
+      "composer": "Wolfgang Amadeus Mozart",
+      "year": 1787,
+      "root_midi": 67,
+      "mode": "major",
+      "notes": [0, -5, 0, -5, 0, -5, 0, 4, 7,
+                5, 2, 5, 2, 5, 2, -1, 2, -5]
+    },
+    {
+      "name": "Rondo alla Turca",
+      "composer": "Wolfgang Amadeus Mozart",
+      "year": 1783,
+      "root_midi": 69,
+      "mode": "minor",
+      "notes": [2, 0, -1, 0, 3,  5, 3, 2, 3, 7,
+                8, 7, 6, 7, 14, 12, 11, 12, 14, 12, 11, 12, 15]
+    },
+    {
+      "name": "Canon in D",
+      "composer": "Johann Pachelbel",
+      "year": 1680,
+      "root_midi": 62,
+      "mode": "major",
+      "notes": [16, 14, 12, 11, 9, 7, 9, 11,
+                12, 11, 9, 7, 5, 4, 5, 2]
+    },
+    {
+      "name": "Jingle Bells",
+      "composer": "James Lord Pierpont",
+      "year": 1857,
+      "root_midi": 60,
+      "mode": "major",
+      "notes": [4, 4, 4, 4, 4, 4, 4, 7, 0, 2, 4,
+                5, 5, 5, 5, 5, 4, 4, 4, 4, 2, 2, 4, 2, 7,
+                4, 4, 4, 4, 4, 4, 4, 7, 0, 2, 4,
+                5, 5, 5, 5, 5, 4, 4, 4, 7, 7, 5, 2, 0]
+    }
+  ]
+}

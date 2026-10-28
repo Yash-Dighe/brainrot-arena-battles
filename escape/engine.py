@@ -197,10 +197,27 @@ def window(v, lo, hi):
     return 1.0
 
 
+def slam(escapes, sc):
+    """The hard-slam opening: the most rings broken inside any
+    burst_window_seconds window that ends by burst_deadline_seconds, and
+    when that window ends (the latest such window on ties). Breaks up to
+    that end count as the burst; the dry middle starts after it."""
+    w, dl = sc["burst_window_seconds"], sc["burst_deadline_seconds"]
+    best, end = 0, 0.0
+    for j, t in enumerate(escapes):
+        if t > dl:
+            break
+        n = sum(1 for u in escapes[:j + 1] if u >= t - w)
+        if n >= best:
+            best, end = n, t
+    return best, end
+
+
 def shape_terms(log, cfg):
     """The burst -> dry -> escape shape, term by term, each 0..1 (1 = on target).
 
-    burst    at least burst_rings rings gone inside the first burst_seconds
+    burst    at least burst_min_rings rings break inside one
+             burst_window_seconds window that ends by burst_deadline_seconds
     cadence  mean gap between breaks after the burst inside
              middle_break_interval_lo..hi: occasional pops, not busy
     silence  no gap after the burst longer than silence_max_seconds
@@ -211,12 +228,13 @@ def shape_terms(log, cfg):
     escapes = [e["t"] for e in log["events"] if e["type"] == "escape"]
     if not escapes:
         return {"burst": 0.0, "cadence": 0.0, "silence": 0.0, "escape": 0.0,
-                "burst_n": 0, "interval": None}
-    early = [t for t in escapes if t <= sc["burst_seconds"]]
-    burst = min(1.0, len(early) / sc["burst_rings"])
+                "burst_n": 0, "burst_end": None, "interval": None}
+    slam_n, slam_end = slam(escapes, sc)
+    burst = min(1.0, slam_n / sc["burst_min_rings"])
+    nb = sum(1 for t in escapes if t <= slam_end)
 
-    # gaps from the last burst break (or t=0) to each later break, final included
-    ts = [early[-1] if early else 0.0] + escapes[len(early):]
+    # gaps from the end of the slam (or t=0) to each later break, final included
+    ts = [slam_end] + escapes[nb:]
     gaps = [b - a for a, b in zip(ts, ts[1:])]
     if gaps:
         interval = sum(gaps) / len(gaps)
@@ -229,22 +247,22 @@ def shape_terms(log, cfg):
     final = escapes[-1] - (escapes[-2] if len(escapes) > 1 else 0.0)
     escape = min(1.0, final / sc["finale_min_seconds"])
     return {"burst": burst, "cadence": cadence, "silence": silence, "escape": escape,
-            "burst_n": len(early), "interval": interval}
+            "burst_n": slam_n, "burst_end": slam_end, "interval": interval}
 
 
 def score(log, cfg):
     """0..1, higher is better. None if the run is unusable.
 
     Unusable: no escape (timeout), or a video outside the duration window
-    (the 65s floor is the whole business case). Usable runs are scored on
-    the burst -> dry -> escape shape; terms combine as a geometric mean, so
-    any one failing sinks the run.
+    (the 60s payout floor is the whole business case). Usable runs are
+    scored on the burst -> dry -> escape shape; terms combine as a geometric
+    mean, so any one failing sinks the run.
     """
     m, vc = log["meta"], cfg["video"]
     if not m["escaped"]:
         return None
-    # max bounds the whole video, end tail included
-    if not (vc["min_seconds"] <= m["duration"] <= vc["max_seconds"] - vc["tail_seconds"]):
+    # the window bounds the whole video, end tail included
+    if not (vc["min_seconds"] <= m["duration"] + vc["tail_seconds"] <= vc["max_seconds"]):
         return None
     t = shape_terms(log, cfg)
     s = (t["burst"] * t["cadence"] * t["silence"] * t["escape"]) ** 0.25
@@ -272,15 +290,36 @@ def summarize(log):
     return f"seed {m['seed']}: escaped in {m['duration']:.1f}s, {n} bounces, {nm} near-misses"
 
 
+def stats(cfg, seeds):
+    """Rates over seeds: escape, duration window, slam, usable, plus the
+    median escape time of the runs that escaped."""
+    bar = cfg["shape"]["usable_score"]
+    n = len(seeds)
+    durs, win, slams, ok = [], 0, 0, 0
+    for seed in seeds:
+        log = simulate(seed, cfg)
+        slams += shape_terms(log, cfg)["burst"] >= 1.0
+        if log["meta"]["escaped"]:
+            durs.append(log["meta"]["duration"])
+        s = score(log, cfg)
+        if s is not None:
+            win += 1
+            ok += s >= bar
+    durs.sort()
+    return {"n": n, "escaped": len(durs) / n, "window": win / n, "slam": slams / n,
+            "usable": ok / n, "median": durs[len(durs) // 2] if durs else None}
+
+
 def survey(n, cfg):
     """Duration spread, usable rate, and how long each ring holds the ball."""
-    bar = cfg["shape"]["usable_score"]
-    durs, scores, fails = [], [], 0
+    bar, sc = cfg["shape"]["usable_score"], cfg["shape"]
+    durs, scores, fails, slams = [], [], 0, 0
     seg = [[] for _ in cfg["rings"]["gap_deg"]]
     for seed in range(n):
         log = simulate(seed, cfg)
         for i, g in enumerate(segments(log)):
             seg[i].append(g)
+        slams += shape_terms(log, cfg)["burst"] >= 1.0
         if not log["meta"]["escaped"]:
             fails += 1
             continue
@@ -295,6 +334,8 @@ def survey(n, cfg):
     ok = sum(s >= bar for s in scores)
     print(f"{len(durs)}/{n} escaped, {fails} timeouts; {len(scores)}/{n} in the "
           f"duration window; usable (score >= {bar}) {ok}/{n}")
+    print(f"slam: {sc['burst_min_rings']}+ rings in {sc['burst_window_seconds']}s "
+          f"by {sc['burst_deadline_seconds']}s in {slams}/{n}")
     if durs:
         durs.sort()
         print(f"duration  min {durs[0]:.1f}  p25 {q(durs, .25):.1f}  "

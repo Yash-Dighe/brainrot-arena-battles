@@ -1,10 +1,13 @@
 """
 Ring escape: audio, synthesized from the event log with the stdlib only.
 
-Every bounce plays the NEXT note of a melody, so the run slowly reveals a
-tune -- that is the genre's hook. The melody is our own (an arpeggiated
-I-IV-V-I in C major), not a famous one: royalty-free is a hard constraint.
-A ring breaking plays a bright chime on top; the final ring plays a chord.
+Every bounce plays the NEXT note of a famous melody, so the run slowly
+reveals a tune -- that is the genre's hook. Songs live in songs.json and
+rotate per video: picked from the seed, or named with make.py --song.
+Hard constraint: public domain in the US only -- composed before 1929 by a
+composer long dead, the original theme, never a modern arrangement or a
+film, game or pop tune. A ring breaking plays a bright chime on top; the
+final ring plays a chord in the song's key.
 
     python escape/audio.py out/escape_197.json          # -> out/escape_197.wav
     python escape/audio.py out/escape_197.json --mux    # + mux into the mp4
@@ -12,21 +15,37 @@ A ring breaking plays a bright chime on top; the final ring plays a chord.
 import argparse, array, json, math, os, shutil, subprocess, sys, wave
 
 SR = 44100
-ROOT_HZ = 261.63          # C4
 MASTER = 0.8
+SONGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "songs.json")
 
-# semitones above C4. Two 16-note phrases; the second answers the first and
-# lands on the tonic so a full loop resolves.
-MELODY = [
-    0, 4, 7, 12, 11, 7, 4, 7,     5, 9, 12, 9, 7, 4, 2, 4,
-    0, 4, 7, 12, 14, 12, 11, 7,   9, 7, 5, 4, 2, 7, -1, 0,
-]
-FINAL_CHORD = [0, 4, 7, 12, 16, 19, 24]
+# semitones above the song's tonic, by mode
+FINAL_CHORD = {"major": [0, 4, 7, 12, 16, 19, 24], "minor": [0, 3, 7, 12, 15, 19, 24]}
+CHIMES = {"major": [12, 14, 16, 19, 21, 24, 26, 28], "minor": [12, 14, 15, 19, 20, 24, 26, 27]}
 NEAR_MERGE = 10 / 60      # near-misses closer than this share one sound (matches render)
 
 
-def hz(semi):
-    return ROOT_HZ * 2.0 ** (semi / 12.0)
+def load_songs(path=SONGS_PATH):
+    with open(path) as f:
+        return json.load(f)["songs"]
+
+
+def pick_song(seed, name=None):
+    """The song for a video: by name if given, else rotated by seed, so the
+    same seed always gets the same song. Name matches exactly or by prefix,
+    ignoring case."""
+    songs = load_songs()
+    if name is None:
+        return songs[seed % len(songs)]
+    key = name.lower()
+    hits = ([s for s in songs if s["name"].lower() == key]
+            or [s for s in songs if s["name"].lower().startswith(key)])
+    if len(hits) != 1:
+        sys.exit(f"--song {name!r}: pick one of " + ", ".join(s["name"] for s in songs))
+    return hits[0]
+
+
+def hz(semi, root_midi=60):
+    return 440.0 * 2.0 ** ((root_midi + semi - 69) / 12.0)
 
 
 class Track:
@@ -100,13 +119,15 @@ def zip_up(dur=0.22, f0=900.0, f1=2600.0):
 
 def build(log):
     m = log["meta"]
+    song = pick_song(m["seed"], m.get("song"))
+    melody, root, mode = song["notes"], song["root_midi"], song["mode"]
     tr = Track(m["video_seconds"])
     _cache = {}
 
     def note(semi, dur, bright):
         k = (semi, dur, bright)
         if k not in _cache:
-            _cache[k] = bell(hz(semi), dur, bright)
+            _cache[k] = bell(hz(semi, root), dur, bright)
         return _cache[k]
 
     nring = len(m["rings"])
@@ -114,7 +135,7 @@ def build(log):
     near_sfx, last_near = zip_up(), -1.0
     for e in log["events"]:
         if e["type"] == "bounce":
-            semi = MELODY[step % len(MELODY)]
+            semi = melody[step % len(melody)]
             step += 1
             # soft taps are quieter, but never inaudible
             g = 0.35 + 0.45 * min(1.0, e["speed"] / 1400)
@@ -122,11 +143,11 @@ def build(log):
         elif e["type"] == "escape":
             last = e["ring"] == nring - 1
             if last:
-                for k, s in enumerate(FINAL_CHORD):
+                for k, s in enumerate(FINAL_CHORD[mode]):
                     tr.add(e["t"] + 0.03 * k, note(s, 2.4, 0.4), 0.32)
             else:
                 # rising with each ring broken: progress you can hear
-                base = [12, 14, 16, 19, 21, 24, 26, 28][e["ring"] % 8]
+                base = CHIMES[mode][e["ring"] % 8]
                 tr.add(e["t"], note(base, 0.9, 0.7), 0.5)
                 tr.add(e["t"] + 0.06, note(base + 7, 0.8, 0.5), 0.35)
             tr.add(e["t"], shimmer(), 0.35)

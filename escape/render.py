@@ -30,7 +30,7 @@ BLOOM_DIV, BLOOM_T, BLOOM_GAIN = 4, 120, 1.6
 NEAR_F = 22            # frames a near-miss spark lasts
 NEAR_MERGE = 10        # near-misses closer than this many frames share one spark
 NEAR_GROW = 90         # px the spark ring expands by
-BAR_W, BAR_H, BAR_GAP = 640, 16, 8   # progress bar, segment spacing
+BAR_W, BAR_H, BAR_GAP = 760, 16, 6   # progress bar, segment spacing (fits up to ~25 rings)
 
 FONT_CANDIDATES = [
     r"C:\Windows\Fonts\ariblk.ttf",

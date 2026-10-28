@@ -89,6 +89,15 @@ train seeds overfits (27% train -> 14% holdout).
   `render.py --at` are fine. Seed 62 is the current best (score 1.0,
   escape 79.2s, 82.2s video).
 
+**Update (2026-10-28): ring-count sweep, 62-70s window, hard slam.** The
+burst term is now a slam: `burst_min_rings` (5) breaks inside one
+`burst_window_seconds` (0.5) window ending by `burst_deadline_seconds` (4).
+`tune.py --sweep` fits geometry per count (`fit()`) and the middle cadence
+(`shape_for()`). Held-out usable rate by count (200 seeds): 10->2%, 12->4%,
+14->6%, 17->1%, 20->2%, 23->4%, 25->2%. 14 rings won and is in `escape.json`.
+The 8s duration window caps everything: only 4-10% of runs land in it.
+Bounce melodies rotate per seed from `songs.json` (`make.py --song`).
+
 **Everything below describes the brainrot battles, which are parked, not
 abandoned.** Their code (`sim/`, `tools/`, `characters.json`) stays untouched
 on `master` and is also on the `brainrot` branch. Narration is parked too.
